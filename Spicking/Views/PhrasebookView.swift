@@ -113,24 +113,11 @@ private struct PhraseCardRow: View {
     let card: PhraseCard
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    Text(card.expressionEn)
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(SpickingPalette.ink)
-
-                    Spacer()
-
-                    Text(
-                        card.createdAt.formatted(
-                            Date.FormatStyle(date: .long, time: .shortened)
-                                .locale(Locale(identifier: "ko_KR"))
-                        )
-                    )
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Text(card.expressionEn)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(SpickingPalette.ink)
 
                 Text(card.intentKo)
                     .font(.subheadline)
@@ -144,11 +131,26 @@ private struct PhraseCardRow: View {
                     .font(.footnote)
                     .foregroundStyle(SpickingPalette.ink)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.secondary)
+            VStack(alignment: .trailing) {
+                Text(
+                    card.createdAt.formatted(
+                        Date.FormatStyle(date: .long, time: .shortened)
+                            .locale(Locale(identifier: "ko_KR"))
+                    )
+                )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(tint: Color.white.opacity(0.86))
         .overlay(
             RoundedRectangle(cornerRadius: 28, style: .continuous)

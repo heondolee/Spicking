@@ -1,11 +1,13 @@
 import AVFoundation
 import Foundation
 import QuartzCore
+import Speech
 
 @MainActor
 final class AudioEngineService {
     var onAudioPCMData: ((Data) -> Void)?
     var onSpeechDetected: (() -> Void)?
+    var onLiveUserTranscription: ((String, Bool) -> Void)?
     var onAssistantPlaybackChanged: ((Bool) -> Void)?
     var onAssistantPlaybackFinished: ((String) -> Void)?
     var inputEnabled = true
@@ -24,6 +26,12 @@ final class AudioEngineService {
     private var currentAssistantStreamEnded = false
     private let speechThreshold: Float = 0.010
     private let speechDetectionCooldown: CFTimeInterval = 0.35
+    private let speechRecognitionSilenceTimeout: CFTimeInterval = 0.9
+    private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private var speechRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var speechRecognitionTask: SFSpeechRecognitionTask?
+    private var speechRecognitionAuthorized = false
+    private var lastRecognitionResult = ""
     private var assistantPlaybackActive = false {
         didSet {
             if assistantPlaybackActive != oldValue {
@@ -34,6 +42,7 @@ final class AudioEngineService {
 
     func start() async throws {
         try configureAudioSession()
+        await configureSpeechRecognition()
         try configureOutput()
         try configureInput()
         try inputEngine.start()
@@ -54,6 +63,7 @@ final class AudioEngineService {
         currentAssistantStreamEnded = false
         assistantPlaybackActive = false
         inputEnabled = true
+        stopSpeechRecognition(markFinal: false)
     }
 
     func enqueueAssistantAudio(base64: String, itemID: String) {
@@ -79,6 +89,8 @@ final class AudioEngineService {
             pendingAssistantBuffers = 0
             currentAssistantStreamEnded = false
         }
+
+        stopSpeechRecognition(markFinal: true)
 
         let durationMilliseconds = Double(frameCount) / playbackFormat.sampleRate * 1_000
         scheduledPlaybackMilliseconds += durationMilliseconds
@@ -172,6 +184,8 @@ final class AudioEngineService {
     private func handleInputBuffer(_ buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat) {
         guard inputEnabled else { return }
         detectSpeech(in: buffer)
+        appendToSpeechRecognition(buffer)
+        finishSpeechRecognitionIfNeeded()
 
         guard let converter = inputConverter else { return }
         let ratio = targetInputFormat.sampleRate / inputFormat.sampleRate
@@ -212,9 +226,70 @@ final class AudioEngineService {
         let now = CACurrentMediaTime()
         if rms > speechThreshold, now - lastSpeechDetectedAt > speechDetectionCooldown {
             lastSpeechDetectedAt = now
+            startSpeechRecognitionIfNeeded()
             Task { @MainActor [weak self] in
                 self?.onSpeechDetected?()
             }
         }
+    }
+
+    private func configureSpeechRecognition() async {
+        let authorizationStatus = await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status)
+            }
+        }
+        speechRecognitionAuthorized = authorizationStatus == .authorized
+    }
+
+    private func startSpeechRecognitionIfNeeded() {
+        guard speechRecognitionAuthorized else { return }
+        guard speechRecognitionRequest == nil else { return }
+        guard let speechRecognizer, speechRecognizer.isAvailable else { return }
+
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.addsPunctuation = false
+
+        lastRecognitionResult = ""
+        speechRecognitionRequest = request
+        speechRecognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, _ in
+            guard let self else { return }
+            guard let result else { return }
+
+            let transcript = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !transcript.isEmpty else { return }
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.lastRecognitionResult = transcript
+                self.onLiveUserTranscription?(transcript, result.isFinal)
+                if result.isFinal {
+                    self.stopSpeechRecognition(markFinal: false)
+                }
+            }
+        }
+    }
+
+    private func appendToSpeechRecognition(_ buffer: AVAudioPCMBuffer) {
+        speechRecognitionRequest?.append(buffer)
+    }
+
+    private func finishSpeechRecognitionIfNeeded() {
+        guard speechRecognitionRequest != nil else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastSpeechDetectedAt > speechRecognitionSilenceTimeout else { return }
+        stopSpeechRecognition(markFinal: true)
+    }
+
+    private func stopSpeechRecognition(markFinal: Bool) {
+        if markFinal, !lastRecognitionResult.isEmpty {
+            onLiveUserTranscription?(lastRecognitionResult, true)
+        }
+        speechRecognitionRequest?.endAudio()
+        speechRecognitionTask?.cancel()
+        speechRecognitionTask = nil
+        speechRecognitionRequest = nil
+        lastRecognitionResult = ""
     }
 }

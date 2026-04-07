@@ -70,57 +70,57 @@ struct HomeView: View {
     }
 
     private var topicComposer: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 24) {
             Text("어떤 이야기로 시작할까요?")
                 .font(.title3.weight(.bold))
                 .fontDesign(.rounded)
                 .foregroundStyle(SpickingPalette.ink)
 
-            Text("직접 주제를 적어보세요")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(SpickingPalette.graphite.opacity(0.58))
-
-            VStack(alignment: .leading, spacing: 10) {
-                TextField("", text: $topic)
-                    .focused($isTopicFieldFocused)
-                    .submitLabel(.done)
-                    .onSubmit {
-                        isTopicFieldFocused = false
-                    }
-                    .textInputAutocapitalization(.never)
-            }
-            .padding(18)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color.white.opacity(0.96))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .stroke(
-                                isTopicFieldFocused ? SpickingPalette.graphite.opacity(0.75) : SpickingPalette.neutralOutline.opacity(0.95),
-                                lineWidth: isTopicFieldFocused ? 1.8 : 1.2
-                            )
-                    )
-            )
-            .shadow(color: isTopicFieldFocused ? Color.black.opacity(0.06) : .clear, radius: 14, y: 8)
-
             VStack(alignment: .leading, spacing: 8) {
-                Text("추천 주제")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(SpickingPalette.graphite.opacity(0.58))
+							Text("직접 주제를 적어보세요")
+									.font(.caption.weight(.semibold))
+									.foregroundStyle(SpickingPalette.graphite.opacity(0.58))
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(topicSuggestions, id: \.self) { suggestion in
-                            Button {
-                                topic = suggestion
-                            } label: {
-                                PromptChip(title: suggestion, isSelected: topic == suggestion)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
+							VStack(alignment: .leading, spacing: 10) {
+									TextField("", text: $topic)
+											.focused($isTopicFieldFocused)
+											.submitLabel(.done)
+											.onSubmit {
+													isTopicFieldFocused = false
+											}
+											.textInputAutocapitalization(.never)
+							}
+							.padding(18)
+							.background(
+									RoundedRectangle(cornerRadius: 24, style: .continuous)
+											.fill(Color.white.opacity(0.96))
+											.overlay(
+													RoundedRectangle(cornerRadius: 24, style: .continuous)
+															.stroke(
+																	isTopicFieldFocused ? SpickingPalette.graphite.opacity(0.75) : SpickingPalette.neutralOutline.opacity(0.95),
+																	lineWidth: isTopicFieldFocused ? 1.8 : 1.2
+															)
+											)
+							)
+							.shadow(color: isTopicFieldFocused ? Color.black.opacity(0.06) : .clear, radius: 14, y: 8)
+							
+							Text("추천 주제")
+									.font(.caption.weight(.semibold))
+									.foregroundStyle(SpickingPalette.graphite.opacity(0.58))
+
+							ScrollView(.horizontal, showsIndicators: false) {
+									HStack(spacing: 10) {
+											ForEach(topicSuggestions, id: \.self) { suggestion in
+													Button {
+															topic = suggestion
+													} label: {
+															PromptChip(title: suggestion, isSelected: topic == suggestion)
+													}
+													.buttonStyle(.plain)
+											}
+									}
+									.padding(.vertical, 2)
+							}
             }
 
             Button {
@@ -341,6 +341,7 @@ private struct RecentSessionRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))

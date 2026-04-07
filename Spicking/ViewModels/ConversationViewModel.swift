@@ -164,6 +164,11 @@ final class ConversationViewModel: ObservableObject, Identifiable {
                 await self?.handleUserSpeechDetected()
             }
         }
+        audioEngine.onLiveUserTranscription = { [weak self] text, isFinal in
+            Task { @MainActor [weak self] in
+                self?.handleLiveUserTranscription(text: text, isFinal: isFinal)
+            }
+        }
 
         realtimeService.onConnectionStateChanged = { [weak self] state in
             self?.connectionState = state
@@ -181,7 +186,8 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             self?.upsertTranscript(remoteItemID: itemID, role: .assistant, text: text, isFinal: isFinal)
         }
         realtimeService.onUserTranscriptUpdated = { [weak self] itemID, text, isFinal in
-            self?.upsertTranscript(remoteItemID: itemID, role: .user, text: text, isFinal: isFinal)
+            guard isFinal else { return }
+            self?.upsertTranscript(remoteItemID: itemID, role: .user, text: text, isFinal: true)
         }
         realtimeService.onServerSpeechStarted = { [weak self] in
             Task { @MainActor [weak self] in
@@ -262,6 +268,13 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         }
 
         scheduleLiveTranscriptSync()
+    }
+
+    private func handleLiveUserTranscription(text: String, isFinal: Bool) {
+        guard isPreparingInitialCoachTurn == false else { return }
+        ensureUserTurnReserved()
+        guard let activeUserRemoteItemID else { return }
+        upsertTranscript(remoteItemID: activeUserRemoteItemID, role: .user, text: text, isFinal: isFinal)
     }
 
     private func ensureUserTurnReserved() {

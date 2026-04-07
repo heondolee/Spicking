@@ -9,24 +9,20 @@ struct LiveConversationView: View {
     @State private var pendingScrollTask: Task<Void, Never>?
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                SpickingBackground()
+        ZStack {
+            SpickingBackground()
 
-                ZStack(alignment: .bottom) {
-                    transcriptArea
-                        .frame(width: geometry.size.width - 40, height: geometry.size.height - 40)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 20)
-
+            transcriptArea
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.horizontal, 20)
+                .overlay(alignment: .bottom) {
                     speakingState
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 20)
+                        .padding(20)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationBarBackButtonHidden()
+        .navigationBarTitleDisplayMode(.inline)
         .alert("대화를 취소할까요?", isPresented: $showCancelAlert) {
             Button("계속 대화하기", role: .cancel) {}
             Button("취소하고 나가기", role: .destructive) {
@@ -109,16 +105,16 @@ struct LiveConversationView: View {
     }
 
     private var transcriptArea: some View {
-        ScrollViewReader { proxy in
-            ZStack {
-                RoundedRectangle(cornerRadius: 32, style: .continuous)
-                    .fill(Color.white.opacity(0.60))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 32, style: .continuous)
-                            .stroke(.white.opacity(0.86), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.05), radius: 22, y: 12)
+        ZStack {
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .fill(Color.white.opacity(0.60))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 32, style: .continuous)
+                        .stroke(.white.opacity(0.86), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.05), radius: 22, y: 12)
 
+            ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 14) {
                         if viewModel.isAwaitingInitialCoachResponse {
@@ -128,31 +124,37 @@ struct LiveConversationView: View {
                             TranscriptBubble(line: line)
                                 .id(line.id)
                         }
+                        Color.clear
+                            .frame(height: 74)
+                            .allowsHitTesting(false)
                     }
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, alignment: .top)
                     .padding(.horizontal, 18)
-                    .padding(.top, 18)
-                    .padding(.bottom, 96)
+                    .padding(.top, 6)
+                    .padding(.bottom, 18)
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .onReceive(viewModel.$liveTranscriptLines.map(\.last?.id).removeDuplicates()) { lastID in
-                guard let lastID else { return }
-                pendingScrollTask?.cancel()
-                pendingScrollTask = Task {
-                    try? await Task.sleep(nanoseconds: 30_000_000)
-                    guard Task.isCancelled == false else { return }
-                    await MainActor.run {
-                        withAnimation(.easeOut(duration: 0.22)) {
-                            proxy.scrollTo(lastID, anchor: .bottom)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .scrollIndicators(.hidden)
+                .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+                .onReceive(viewModel.$liveTranscriptLines.map(\.last?.id).removeDuplicates()) { lastID in
+                    guard let lastID else { return }
+                    pendingScrollTask?.cancel()
+                    pendingScrollTask = Task {
+                        try? await Task.sleep(nanoseconds: 30_000_000)
+                        guard Task.isCancelled == false else { return }
+                        await MainActor.run {
+                            withAnimation(.easeOut(duration: 0.22)) {
+                                proxy.scrollTo(lastID, anchor: .bottom)
+                            }
                         }
                     }
                 }
-            }
-            .onDisappear {
-                pendingScrollTask?.cancel()
+                .onDisappear {
+                    pendingScrollTask?.cancel()
+                }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -184,6 +186,10 @@ private struct InitialCoachLoadingBubble: View {
 private struct TranscriptBubble: View {
     let line: LiveTranscriptLine
 
+    private var bubbleTextMaxWidth: CGFloat {
+        250
+    }
+
     private var isAssistant: Bool {
         line.role == .assistant
     }
@@ -207,6 +213,7 @@ private struct TranscriptBubble: View {
             tokenRevealDelay: isAssistant ? 55_000_000 : 35_000_000,
             textColor: UIColor(isAssistant ? .white : SpickingPalette.ink)
         )
+            .frame(maxWidth: bubbleTextMaxWidth, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(background)
@@ -273,13 +280,16 @@ private struct StreamingTranscriptLabel: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UILabel {
-        let label = UILabel()
+        let label = WrappingLabel()
         label.numberOfLines = 0
         label.lineBreakMode = .byWordWrapping
         label.font = UIFont.preferredFont(forTextStyle: .body)
         label.adjustsFontForContentSizeCategory = true
+        label.textAlignment = .left
         label.textColor = textColor
         label.alpha = 0
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         label.setContentCompressionResistancePriority(.required, for: .vertical)
         label.setContentHuggingPriority(.defaultHigh, for: .vertical)
         context.coordinator.attach(to: label)
@@ -293,6 +303,13 @@ private struct StreamingTranscriptLabel: UIViewRepresentable {
 
     static func dismantleUIView(_ uiView: UILabel, coordinator: Coordinator) {
         coordinator.cancel()
+    }
+
+    final class WrappingLabel: UILabel {
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            preferredMaxLayoutWidth = bounds.width
+        }
     }
 
     final class Coordinator {
