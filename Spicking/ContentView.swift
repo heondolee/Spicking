@@ -1,61 +1,39 @@
-//
-//  ContentView.swift
-//  Spicking
-//
-//  Created by rundo on 4/7/26.
-//
-
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @StateObject private var appViewModel = AppViewModel()
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+        RootView(appViewModel: appViewModel)
+            .environment(\.modelContext, modelContext)
+            .fullScreenCover(item: $appViewModel.activeConversation) { conversationViewModel in
+                ConversationFlowView(
+                    viewModel: conversationViewModel,
+                    onClose: {
+                        appViewModel.finishConversationFlow()
+                    }
+                )
+            }
+            .alert("Something went wrong", isPresented: Binding(
+                get: { appViewModel.alertMessage != nil },
+                set: { newValue in
+                    if !newValue {
+                        appViewModel.alertMessage = nil
                     }
                 }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
+            )) {
+                Button("OK", role: .cancel) {
+                    appViewModel.alertMessage = nil
                 }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
+            } message: {
+                Text(appViewModel.alertMessage ?? "Unknown error")
             }
-        } detail: {
-            Text("Select an item")
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
-        }
     }
 }
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        .modelContainer(PreviewData.makeContainer())
 }

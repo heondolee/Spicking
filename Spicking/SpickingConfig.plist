@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>APP_SHARED_SECRET</key>
+	<string>YOUR_APP_SHARED_SECRET</string>
+	<key>MODEL</key>
+	<string>gpt-realtime</string>
+	<key>VOICE</key>
+	<string>marin</string>
+	<key>WORKER_URL</key>
+	<string>https://YOUR_WORKER_DOMAIN/realtime/session</string>
+</dict>
+</plist>

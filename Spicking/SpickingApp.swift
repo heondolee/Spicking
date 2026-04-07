@@ -1,23 +1,19 @@
-//
-//  SpickingApp.swift
-//  Spicking
-//
-//  Created by rundo on 4/7/26.
-//
-
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 @main
 struct SpickingApp: App {
-    var sharedModelContainer: ModelContainer = {
+    private let sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            ConversationSession.self,
+            TranscriptEntry.self,
+            ReviewSuggestion.self,
+            PhraseCard.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(for: schema, configurations: [configuration])
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }
