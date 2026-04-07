@@ -9,12 +9,12 @@ struct RootView: View {
         TabView {
             HomeView(appViewModel: appViewModel)
                 .tabItem {
-                    Label("Home", systemImage: "house")
+                    Label("홈", systemImage: "house")
                 }
 
             PhrasebookView()
                 .tabItem {
-                    Label("Phrasebook", systemImage: "text.book.closed")
+                    Label("표현장", systemImage: "text.book.closed")
                 }
         }
         .environment(\.modelContext, modelContext)

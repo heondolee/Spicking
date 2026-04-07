@@ -16,7 +16,7 @@ struct ContentView: View {
                     }
                 )
             }
-            .alert("Something went wrong", isPresented: Binding(
+            .alert("문제가 발생했어요", isPresented: Binding(
                 get: { appViewModel.alertMessage != nil },
                 set: { newValue in
                     if !newValue {
@@ -24,11 +24,11 @@ struct ContentView: View {
                     }
                 }
             )) {
-                Button("OK", role: .cancel) {
+                Button("확인", role: .cancel) {
                     appViewModel.alertMessage = nil
                 }
             } message: {
-                Text(appViewModel.alertMessage ?? "Unknown error")
+                Text(appViewModel.alertMessage ?? "알 수 없는 오류가 발생했어요.")
             }
     }
 }

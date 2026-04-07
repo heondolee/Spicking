@@ -5,30 +5,42 @@ struct SessionReviewView: View {
     let onDone: () -> Void
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Session Review")
-                    .font(.largeTitle.bold())
+        ZStack {
+            SpickingBackground()
 
-                Text("Save the rewrites you want to reuse later in your Phrasebook.")
-                    .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("세션 리뷰")
+                            .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                            .foregroundStyle(SpickingPalette.ink)
+                        Text("오늘 말한 문장을 더 자연스럽게 다듬어봤어요. 마음에 드는 표현만 저장해두세요.")
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            MetricChip(title: "추천 표현", value: "\(viewModel.reviewCards.count)개", tint: SpickingPalette.ocean)
+                            MetricChip(title: "저장 완료", value: "\(viewModel.reviewCards.filter(\.isSaved).count)개", tint: SpickingPalette.teal)
+                        }
+                    }
+                    .glassCard(tint: Color.white.opacity(0.8))
 
-                if viewModel.reviewCards.isEmpty {
-                    EmptyReviewState()
-                } else {
-                    ForEach(viewModel.reviewCards) { card in
-                        ReviewCardView(card: card) {
-                            viewModel.savePhraseCard(for: card)
+                    if viewModel.reviewCards.isEmpty {
+                        EmptyReviewState()
+                    } else {
+                        ForEach(viewModel.reviewCards) { card in
+                            ReviewCardView(card: card) {
+                                viewModel.savePhraseCard(for: card)
+                            }
                         }
                     }
                 }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
             }
-            .padding()
         }
         .navigationBarBackButtonHidden()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Done", action: onDone)
+                Button("완료", action: onDone)
             }
         }
     }
@@ -54,19 +66,19 @@ private struct ReviewCardView: View {
                                 .font(.caption.weight(.medium))
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .background(Color.accentColor.opacity(0.12), in: Capsule())
+                                .background(SpickingPalette.ocean.opacity(0.12), in: Capsule())
                         }
                     }
                 }
             }
 
-            Button(card.isSaved ? "Saved" : "Save to Phrasebook", action: onSave)
+            Button(card.isSaved ? "저장됨" : "표현장에 저장", action: onSave)
                 .buttonStyle(.borderedProminent)
+                .tint(SpickingPalette.ink)
                 .disabled(card.isSaved)
         }
-        .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .glassCard(tint: Color.white.opacity(0.82))
     }
 
     private func section(title: String, body: String) -> some View {
@@ -83,13 +95,12 @@ private struct ReviewCardView: View {
 private struct EmptyReviewState: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("No review suggestions yet")
-                .font(.headline)
-            Text("This usually happens when the session was too short. Try speaking for a few more turns next time.")
+            Text("아직 리뷰가 없어요")
+                .font(.headline.weight(.bold))
+            Text("이번 세션이 너무 짧아서 분석할 문장이 부족했어요. 다음에는 조금 더 길게 이야기해보세요.")
                 .foregroundStyle(.secondary)
         }
-        .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .glassCard(tint: Color.white.opacity(0.8))
     }
 }

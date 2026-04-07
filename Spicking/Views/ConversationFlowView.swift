@@ -11,9 +11,9 @@ struct ConversationFlowView: View {
                 case .preparing, .live:
                     LiveConversationView(viewModel: viewModel, onClose: onClose)
                 case .generatingReview:
-                    ProgressView("Building your review...")
+                    ProgressView("리뷰를 만드는 중이에요…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color(.systemBackground))
+                        .background(SpickingBackground())
                 case .review:
                     SessionReviewView(viewModel: viewModel, onDone: onClose)
                 case .failed(let message):
@@ -35,18 +35,24 @@ private struct FailureStateView: View {
     let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 40))
-                .foregroundStyle(.orange)
-            Text("Session could not start")
-                .font(.title3.weight(.semibold))
-            Text(message)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Close", action: onClose)
-                .buttonStyle(.borderedProminent)
+        ZStack {
+            SpickingBackground()
+
+            VStack(spacing: 16) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 40))
+                    .foregroundStyle(SpickingPalette.coral)
+                Text("세션을 시작하지 못했어요")
+                    .font(.title3.weight(.semibold))
+                Text(message)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("닫기", action: onClose)
+                    .buttonStyle(.borderedProminent)
+                    .tint(SpickingPalette.ink)
+            }
+            .glassCard(tint: Color.white.opacity(0.84))
+            .padding(24)
         }
-        .padding(24)
     }
 }

@@ -5,35 +5,46 @@ struct LiveConversationView: View {
     let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        ZStack {
+            SpickingBackground()
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(viewModel.liveTranscriptLines) { line in
-                            TranscriptBubble(line: line)
-                                .id(line.id)
+            VStack(spacing: 14) {
+                header
+
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 14) {
+                            ForEach(viewModel.liveTranscriptLines) { line in
+                                TranscriptBubble(line: line)
+                                    .id(line.id)
+                            }
+                        }
+                        .padding(18)
+                    }
+                    .background(Color.white.opacity(0.58), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 30, style: .continuous)
+                            .stroke(.white.opacity(0.7), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.05), radius: 22, y: 12)
+                    .onChange(of: viewModel.liveTranscriptLines) { _, lines in
+                        if let last = lines.last?.id {
+                            withAnimation(.easeOut(duration: 0.25)) {
+                                proxy.scrollTo(last, anchor: .bottom)
+                            }
                         }
                     }
-                    .padding()
                 }
-                .background(Color(.systemGroupedBackground))
-                .onChange(of: viewModel.liveTranscriptLines) { _, lines in
-                    if let last = lines.last?.id {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(last, anchor: .bottom)
-                        }
-                    }
-                }
+
+                footer
             }
-
-            footer
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
         }
         .navigationBarBackButtonHidden()
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button("Close") {
+                Button("닫기") {
                     viewModel.close()
                     onClose()
                 }
@@ -43,27 +54,34 @@ struct LiveConversationView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Text("실전 영어 대화")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(SpickingPalette.ocean)
+
             Text(viewModel.topic)
-                .font(.title3.weight(.semibold))
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(SpickingPalette.ink)
+
             HStack(spacing: 12) {
-                StatusPill(title: "Connection", value: viewModel.connectionState.label, tint: connectionTint)
-                StatusPill(title: "Assistant", value: viewModel.assistantSpeaking ? "Speaking" : "Listening", tint: viewModel.assistantSpeaking ? .orange : .green)
+                StatusPill(title: "연결 상태", value: viewModel.connectionState.label, tint: connectionTint)
+                StatusPill(title: "AI 상태", value: viewModel.assistantSpeaking ? "말하는 중" : "듣는 중", tint: viewModel.assistantSpeaking ? SpickingPalette.coral : SpickingPalette.teal)
             }
+
             Text(viewModel.statusMessage)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
-        .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemBackground))
+        .glassCard(tint: Color.white.opacity(0.8))
     }
 
     private var footer: some View {
         VStack(spacing: 12) {
-            Text("You can interrupt the assistant naturally. Your speaking is being transcribed live.")
+            Text("대화는 영어로만 진행됩니다. AI가 말하는 중에도 자연스럽게 끼어들 수 있어요.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+
             Button {
                 Task {
                     await viewModel.endSession()
@@ -73,23 +91,23 @@ struct LiveConversationView: View {
                     ProgressView()
                         .frame(maxWidth: .infinity)
                 } else {
-                    Label("End Session", systemImage: "stop.circle.fill")
+                    Label("세션 종료하고 리뷰 보기", systemImage: "stop.circle.fill")
                         .frame(maxWidth: .infinity)
                 }
             }
             .buttonStyle(.borderedProminent)
+            .tint(SpickingPalette.ink)
             .disabled(viewModel.isEndingSession)
         }
-        .padding()
-        .background(Color(.systemBackground))
+        .glassCard(tint: Color.white.opacity(0.84))
     }
 
     private var connectionTint: Color {
         switch viewModel.connectionState {
         case .connected:
-            return .green
+            return SpickingPalette.teal
         case .connecting:
-            return .orange
+            return SpickingPalette.coral
         case .failed:
             return .red
         case .disconnected:
@@ -111,7 +129,8 @@ private struct StatusPill: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.subheadline.weight(.semibold))
+                .font(.subheadline.weight(.bold))
+                .fontDesign(.rounded)
                 .foregroundStyle(tint)
         }
         .padding(.horizontal, 12)
@@ -123,9 +142,29 @@ private struct StatusPill: View {
 private struct TranscriptBubble: View {
     let line: LiveTranscriptLine
 
+    private var bubbleStyle: AnyShapeStyle {
+        if line.role == .user {
+            AnyShapeStyle(
+                LinearGradient(
+                    colors: [SpickingPalette.ocean, SpickingPalette.teal],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        } else {
+            AnyShapeStyle(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.96), Color.white.opacity(0.78)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+        }
+    }
+
     var body: some View {
-        VStack(alignment: line.role == .user ? .trailing : .leading, spacing: 6) {
-            Text(line.role == .user ? "You" : "Coach")
+        VStack(alignment: line.role == .user ? .trailing : .leading, spacing: 8) {
+            Text(line.role == .user ? "나" : "코치")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -133,17 +172,14 @@ private struct TranscriptBubble: View {
                 .foregroundStyle(line.role == .user ? .white : .primary)
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: line.role == .user ? .trailing : .leading)
-                .background(
-                    line.role == .user ? Color.accentColor : Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-                )
+                .background(bubbleStyle, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
 
             HStack(spacing: 6) {
                 if !line.isFinal {
-                    Text("Listening…")
+                    Text("받아쓰는 중…")
                 }
                 if line.wasInterrupted {
-                    Text("Interrupted")
+                    Text("중간 끊기")
                 }
             }
             .font(.caption2)

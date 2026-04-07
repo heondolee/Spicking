@@ -14,9 +14,9 @@ enum AppConfigurationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingFile:
-            return "SpickingConfig.plist is missing from the app bundle."
+            return "앱 번들 안에서 SpickingConfig.plist를 찾을 수 없어요."
         case .invalidValues:
-            return "Update SpickingConfig.plist with your Worker URL and shared secret before starting a conversation."
+            return "대화를 시작하기 전에 SpickingConfig.plist에 Worker URL과 공유 시크릿을 입력해주세요."
         }
     }
 }

@@ -11,7 +11,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     @Published var connectionState: RealtimeConnectionState = .idle
     @Published var liveTranscriptLines: [LiveTranscriptLine] = []
     @Published var reviewCards: [ReviewCard] = []
-    @Published var statusMessage: String = "Preparing your session..."
+    @Published var statusMessage: String = "세션을 준비하고 있어요…"
     @Published var errorMessage: String?
     @Published var assistantSpeaking = false
     @Published var isEndingSession = false
@@ -46,7 +46,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             try modelContext.save()
             sessionRecord = session
 
-            statusMessage = "Connecting to your speaking coach..."
+            statusMessage = "영어 코치와 연결 중이에요…"
             connectionState = .connecting
             try await audioEngine.start()
             audioEngineService = audioEngine
@@ -56,7 +56,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             session.status = .live
             try modelContext.save()
             phase = .live
-            statusMessage = "Speak naturally. You can interrupt the assistant anytime."
+            statusMessage = "영어로 자연스럽게 말해보세요. AI가 말하는 중에도 바로 이어서 말할 수 있어요."
         } catch {
             fail(with: error.localizedDescription)
         }
@@ -66,13 +66,13 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         guard !isEndingSession else { return }
         isEndingSession = true
         phase = .generatingReview
-        statusMessage = "Generating your review..."
+        statusMessage = "세션 리뷰를 생성하고 있어요…"
 
         audioEngineService?.stop()
         assistantSpeaking = false
 
         guard let sessionRecord else {
-            fail(with: "No session found.")
+            fail(with: "세션 정보를 찾지 못했어요.")
             isEndingSession = false
             return
         }
@@ -84,7 +84,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             try modelContext.save()
 
             if liveTranscriptLines.filter({ $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }).count <= 1 {
-                statusMessage = "Not enough spoken English yet. Try a longer session next time."
+                statusMessage = "이번 세션은 대화가 짧아서 리뷰를 만들기 어려웠어요. 다음에는 조금 더 길게 말해보세요."
                 reviewCards = []
                 sessionRecord.status = .completed
                 try modelContext.save()
@@ -101,7 +101,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             sessionRecord.status = .completed
             try modelContext.save()
             phase = .review
-            statusMessage = "Review ready"
+            statusMessage = "리뷰가 준비됐어요."
             realtimeSessionService?.disconnect()
         } catch {
             fail(with: error.localizedDescription)
@@ -249,7 +249,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
 
     private func requestReviewWithRetry() async throws -> String {
         guard let realtimeSessionService else {
-            throw NSError(domain: "ConversationViewModel", code: 0, userInfo: [NSLocalizedDescriptionKey: "Realtime session missing."])
+            throw NSError(domain: "ConversationViewModel", code: 0, userInfo: [NSLocalizedDescriptionKey: "실시간 세션 정보가 없어요."])
         }
 
         do {

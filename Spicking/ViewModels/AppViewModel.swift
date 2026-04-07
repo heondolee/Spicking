@@ -9,7 +9,7 @@ final class AppViewModel: ObservableObject {
 
     func startConversation(topic: String, modelContext: ModelContext) {
         let cleanedTopic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalTopic = cleanedTopic.isEmpty ? "daily life and small talk" : cleanedTopic
+        let finalTopic = cleanedTopic.isEmpty ? "하루 일과와 가벼운 스몰토크" : cleanedTopic
         activeConversation = ConversationViewModel(topic: finalTopic, modelContext: modelContext)
     }
 

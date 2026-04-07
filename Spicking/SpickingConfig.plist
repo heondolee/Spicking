@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
 	<key>APP_SHARED_SECRET</key>
-	<string>YOUR_APP_SHARED_SECRET</string>
+	<string>spicking_2026</string>
 	<key>MODEL</key>
 	<string>gpt-realtime</string>
 	<key>VOICE</key>
 	<string>marin</string>
 	<key>WORKER_URL</key>
-	<string>https://YOUR_WORKER_DOMAIN/realtime/session</string>
+	<string>https://spicking-flare.rundo999.workers.dev/realtime/session</string>
 </dict>
 </plist>

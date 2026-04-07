@@ -42,15 +42,15 @@ enum RealtimeConnectionState: String {
     var label: String {
         switch self {
         case .idle:
-            return "Idle"
+            return "대기"
         case .connecting:
-            return "Connecting"
+            return "연결 중"
         case .connected:
-            return "Connected"
+            return "연결됨"
         case .disconnected:
-            return "Disconnected"
+            return "연결 종료"
         case .failed:
-            return "Failed"
+            return "실패"
         }
     }
 }
