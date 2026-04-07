@@ -56,7 +56,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             session.status = .live
             try modelContext.save()
             phase = .live
-            statusMessage = "영어로 자연스럽게 말해보세요. AI가 말하는 중에도 바로 이어서 말할 수 있어요."
+            statusMessage = "대화 준비가 끝났어요."
         } catch {
             fail(with: error.localizedDescription)
         }
@@ -235,6 +235,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private func syncLiveTranscriptLines() {
         let lines = transcriptEntriesByRemoteID.values
             .sorted { $0.sequence < $1.sequence }
+            .filter { $0.isFinal || $0.wasInterrupted }
             .map {
                 LiveTranscriptLine(
                     id: $0.remoteItemID,

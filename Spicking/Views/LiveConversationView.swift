@@ -9,181 +9,190 @@ struct LiveConversationView: View {
             SpickingBackground()
 
             VStack(spacing: 14) {
-                header
-
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
-                            ForEach(viewModel.liveTranscriptLines) { line in
-                                TranscriptBubble(line: line)
-                                    .id(line.id)
-                            }
-                        }
-                        .padding(18)
-                    }
-                    .background(Color.white.opacity(0.58), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 30, style: .continuous)
-                            .stroke(.white.opacity(0.7), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.05), radius: 22, y: 12)
-                    .onChange(of: viewModel.liveTranscriptLines) { _, lines in
-                        if let last = lines.last?.id {
-                            withAnimation(.easeOut(duration: 0.25)) {
-                                proxy.scrollTo(last, anchor: .bottom)
-                            }
-                        }
-                    }
-                }
-
+                topBar
+                topicBadge
+                speakingState
+                transcriptArea
                 footer
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
         .navigationBarBackButtonHidden()
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("닫기") {
-                    viewModel.close()
-                    onClose()
-                }
+    }
+
+    private var topBar: some View {
+        HStack {
+            Button("닫기") {
+                viewModel.close()
+                onClose()
             }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(SpickingPalette.ink)
+
+            Spacer()
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("실전 영어 대화")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(SpickingPalette.ocean)
-
+    private var topicBadge: some View {
+        HStack {
             Text(viewModel.topic)
-                .font(.system(.title2, design: .rounded, weight: .bold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(SpickingPalette.ink)
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.86))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(SpickingPalette.outline.opacity(0.9), lineWidth: 1.1)
+                        )
+                )
 
-            HStack(spacing: 12) {
-                StatusPill(title: "연결 상태", value: viewModel.connectionState.label, tint: connectionTint)
-                StatusPill(title: "AI 상태", value: viewModel.assistantSpeaking ? "말하는 중" : "듣는 중", tint: viewModel.assistantSpeaking ? SpickingPalette.coral : SpickingPalette.teal)
+            Spacer()
+        }
+    }
+
+    private var speakingState: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill((viewModel.assistantSpeaking ? SpickingPalette.ocean : SpickingPalette.coral).opacity(0.16))
+                    .frame(width: 54, height: 54)
+
+                Image(systemName: viewModel.assistantSpeaking ? "speaker.wave.3.fill" : "mic.fill")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(viewModel.assistantSpeaking ? SpickingPalette.ocean : SpickingPalette.coral)
+                    .symbolEffect(.pulse.byLayer, options: .repeating, value: viewModel.assistantSpeaking)
             }
 
-            Text(viewModel.statusMessage)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(viewModel.assistantSpeaking ? "AI가 말하는 중" : "이제 말해보세요")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(SpickingPalette.ink)
+                Text(viewModel.assistantSpeaking ? "중간에 바로 끼어들어도 자연스럽게 이어집니다." : "영어로 편하게 말하면 다음 질문이 이어집니다.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard(tint: Color.white.opacity(0.8))
+        .glassCard(tint: Color.white.opacity(0.80))
+    }
+
+    private var transcriptArea: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    ForEach(viewModel.liveTranscriptLines) { line in
+                        TranscriptBubble(line: line)
+                            .id(line.id)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 20)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    .fill(Color.white.opacity(0.60))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 32, style: .continuous)
+                            .stroke(.white.opacity(0.86), lineWidth: 1)
+                    )
+            )
+            .shadow(color: .black.opacity(0.05), radius: 22, y: 12)
+            .onChange(of: viewModel.liveTranscriptLines) { _, lines in
+                if let last = lines.last?.id {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        proxy.scrollTo(last, anchor: .bottom)
+                    }
+                }
+            }
+        }
     }
 
     private var footer: some View {
-        VStack(spacing: 12) {
-            Text("대화는 영어로만 진행됩니다. AI가 말하는 중에도 자연스럽게 끼어들 수 있어요.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            Button {
-                Task {
-                    await viewModel.endSession()
-                }
-            } label: {
-                if viewModel.isEndingSession {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Label("세션 종료하고 리뷰 보기", systemImage: "stop.circle.fill")
-                        .frame(maxWidth: .infinity)
+        Button {
+            Task {
+                await viewModel.endSession()
+            }
+        } label: {
+            if viewModel.isEndingSession {
+                ProgressView()
+            } else {
+                HStack(spacing: 10) {
+                    Image(systemName: "stop.circle.fill")
+                    Text("대화 종료")
+                        .font(.headline.weight(.semibold))
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(SpickingPalette.ink)
-            .disabled(viewModel.isEndingSession)
         }
-        .glassCard(tint: Color.white.opacity(0.84))
-    }
-
-    private var connectionTint: Color {
-        switch viewModel.connectionState {
-        case .connected:
-            return SpickingPalette.teal
-        case .connecting:
-            return SpickingPalette.coral
-        case .failed:
-            return .red
-        case .disconnected:
-            return .gray
-        case .idle:
-            return .secondary
-        }
-    }
-}
-
-private struct StatusPill: View {
-    let title: String
-    let value: String
-    let tint: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.subheadline.weight(.bold))
-                .fontDesign(.rounded)
-                .foregroundStyle(tint)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .buttonStyle(PrimaryActionButtonStyle())
+        .disabled(viewModel.isEndingSession)
     }
 }
 
 private struct TranscriptBubble: View {
     let line: LiveTranscriptLine
 
-    private var bubbleStyle: AnyShapeStyle {
-        if line.role == .user {
-            AnyShapeStyle(
-                LinearGradient(
-                    colors: [SpickingPalette.ocean, SpickingPalette.teal],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-        } else {
-            AnyShapeStyle(
-                LinearGradient(
-                    colors: [Color.white.opacity(0.96), Color.white.opacity(0.78)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-        }
+    private var isAssistant: Bool {
+        line.role == .assistant
     }
 
     var body: some View {
-        VStack(alignment: line.role == .user ? .trailing : .leading, spacing: 8) {
-            Text(line.role == .user ? "나" : "코치")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+        HStack {
+            if isAssistant {
+                bubble
+                Spacer(minLength: 46)
+            } else {
+                Spacer(minLength: 46)
+                bubble
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
 
-            Text(line.text)
-                .foregroundStyle(line.role == .user ? .white : .primary)
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: line.role == .user ? .trailing : .leading)
-                .background(bubbleStyle, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            HStack(spacing: 6) {
-                if !line.isFinal {
-                    Text("받아쓰는 중…")
-                }
+    private var bubble: some View {
+        Text(line.text)
+            .font(.body)
+            .foregroundStyle(isAssistant ? .white : SpickingPalette.ink)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(alignment: .bottomTrailing) {
                 if line.wasInterrupted {
-                    Text("중간 끊기")
+                    Text("중간 종료")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isAssistant ? .white.opacity(0.9) : .secondary)
+                        .padding(.trailing, 10)
+                        .padding(.bottom, 8)
                 }
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var background: some View {
+        if isAssistant {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [SpickingPalette.ocean, SpickingPalette.teal],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white.opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(SpickingPalette.outline.opacity(0.9), lineWidth: 1.2)
+                )
+                .shadow(color: .black.opacity(0.03), radius: 10, y: 6)
         }
     }
 }

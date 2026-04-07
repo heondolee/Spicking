@@ -13,9 +13,7 @@ struct PhrasebookView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("표현장")
-                                .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                                .foregroundStyle(SpickingPalette.ink)
+                            BrandMark()
                             Text("저장해둔 자연스러운 문장을 다시 찾아보고, 다음 대화에서 바로 꺼내 써보세요.")
                                 .foregroundStyle(.secondary)
                         }
@@ -39,19 +37,6 @@ struct PhrasebookView: View {
                                         .foregroundStyle(.secondary)
                                     Text(card.usageNoteKo)
                                         .font(.footnote)
-                                    if !card.tags.isEmpty {
-                                        ScrollView(.horizontal, showsIndicators: false) {
-                                            HStack(spacing: 8) {
-                                                ForEach(card.tags, id: \.self) { tag in
-                                                    Text(tag)
-                                                        .font(.caption)
-                                                        .padding(.horizontal, 8)
-                                                        .padding(.vertical, 4)
-                                                        .background(SpickingPalette.ocean.opacity(0.12), in: Capsule())
-                                                }
-                                            }
-                                        }
-                                    }
                                 }
                                 .glassCard(tint: Color.white.opacity(0.82))
                             }
@@ -61,7 +46,7 @@ struct PhrasebookView: View {
                     .padding(.vertical, 16)
                 }
             }
-            .searchable(text: $searchText, prompt: "표현이나 태그 검색")
+            .searchable(text: $searchText, prompt: "표현 검색")
             .navigationTitle("표현장")
         }
     }
@@ -73,7 +58,6 @@ struct PhrasebookView: View {
             $0.expressionEn.localizedCaseInsensitiveContains(query)
                 || $0.intentKo.localizedCaseInsensitiveContains(query)
                 || $0.usageNoteKo.localizedCaseInsensitiveContains(query)
-                || $0.tags.contains(where: { $0.localizedCaseInsensitiveContains(query) })
         }
     }
 }

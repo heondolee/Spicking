@@ -4,7 +4,6 @@ import SwiftUI
 struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \ConversationSession.startedAt, order: .reverse) private var sessions: [ConversationSession]
-    @Query(sort: \PhraseCard.createdAt, order: .reverse) private var phraseCards: [PhraseCard]
     @ObservedObject var appViewModel: AppViewModel
     @State private var topic = "하루 일과와 가벼운 스몰토크"
 
@@ -22,8 +21,9 @@ struct HomeView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        heroCard
-                        SetupCard()
+                        BrandMark()
+                            .padding(.top, 8)
+
                         topicComposer
                         recentSessionsSection
                     }
@@ -31,39 +31,26 @@ struct HomeView: View {
                     .padding(.vertical, 16)
                 }
             }
-            .navigationTitle("스피킹")
-            .toolbarTitleDisplayMode(.large)
+            .navigationBarHidden(true)
         }
-    }
-
-    private var heroCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("말이 붙는 영어 회화")
-                .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                .foregroundStyle(SpickingPalette.ink)
-
-            Text("지금 떠오르는 생각을 영어로 말하고, 더 자연스러운 표현으로 바로 다듬어보세요.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 10) {
-                MetricChip(title: "저장 표현", value: "\(phraseCards.count)개", tint: SpickingPalette.ocean)
-                MetricChip(title: "누적 세션", value: "\(sessions.count)회", tint: SpickingPalette.teal)
-            }
-        }
-        .glassCard(tint: Color.white.opacity(0.82))
     }
 
     private var topicComposer: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader("오늘의 대화 주제", subtitle: "주제를 한국어로 적어도 대화는 영어로만 진행돼요.")
+            Text("지금 어떤 이야기로 시작할까요?")
+                .font(.title3.weight(.bold))
+                .fontDesign(.rounded)
+                .foregroundStyle(SpickingPalette.ink)
 
             TextField("예: 이번 주말 계획 이야기하기", text: $topic, axis: .vertical)
-                .padding(16)
-                .background(Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(SpickingPalette.ocean.opacity(0.12), lineWidth: 1)
+                .padding(18)
+                .background(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(Color.white.opacity(0.90))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                .stroke(SpickingPalette.outline.opacity(0.95), lineWidth: 1.2)
+                        )
                 )
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -72,15 +59,12 @@ struct HomeView: View {
                         Button {
                             topic = suggestion
                         } label: {
-                            Text(suggestion)
-                                .font(.subheadline.weight(.medium))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(Color.white.opacity(0.72), in: Capsule())
+                            PromptChip(title: suggestion, isSelected: topic == suggestion)
                         }
                         .buttonStyle(.plain)
                     }
                 }
+                .padding(.vertical, 2)
             }
 
             Button {
@@ -92,60 +76,31 @@ struct HomeView: View {
                     Text("영어 대화 시작하기")
                         .font(.headline.weight(.semibold))
                 }
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-                .background(
-                    LinearGradient(
-                        colors: [SpickingPalette.ocean, SpickingPalette.teal],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    in: RoundedRectangle(cornerRadius: 22, style: .continuous)
-                )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PrimaryActionButtonStyle())
         }
-        .glassCard(tint: Color.white.opacity(0.78))
+        .glassCard(tint: Color.white.opacity(0.74))
     }
 
     private var recentSessionsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SectionHeader("최근 세션", subtitle: "최근 대화와 학습 흐름을 빠르게 확인해보세요.")
+            SectionHeader("최근 세션")
 
             if sessions.isEmpty {
                 Text("아직 기록된 세션이 없어요. 첫 대화를 시작하면 여기에 표시됩니다.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(Array(sessions.prefix(3))) { session in
-                    RecentSessionRow(session: session)
+                ForEach(Array(sessions.prefix(6))) { session in
+                    NavigationLink {
+                        SessionHistoryView(session: session)
+                    } label: {
+                        RecentSessionRow(session: session)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
-        .glassCard(tint: Color.white.opacity(0.74))
-    }
-}
-
-private struct SetupCard: View {
-    private var isConfigured: Bool {
-        (try? AppConfigurationLoader.load()) != nil
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(isConfigured ? "연결 준비 완료" : "설정 확인 필요", systemImage: isConfigured ? "checkmark.seal.fill" : "gearshape.2.fill")
-                .font(.headline)
-                .foregroundStyle(isConfigured ? .green : .primary)
-
-            Text(
-                isConfigured
-                ? "Worker URL과 공유 시크릿을 확인했어요. 이제 바로 영어 대화를 시작할 수 있어요."
-                : "실시간 대화를 시작하기 전에 SpickingConfig.plist에 Worker URL과 공유 시크릿을 먼저 입력해주세요."
-            )
-            .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard(tint: isConfigured ? SpickingPalette.teal.opacity(0.18) : Color.white.opacity(0.74))
+        .glassCard(tint: Color.white.opacity(0.70))
     }
 }
 
@@ -153,59 +108,53 @@ private struct RecentSessionRow: View {
     let session: ConversationSession
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        HStack(alignment: .top, spacing: 14) {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [SpickingPalette.ocean, SpickingPalette.teal],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 42, height: 42)
+                .overlay(
+                    Image(systemName: "text.bubble.fill")
+                        .foregroundStyle(.white)
+                )
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text(session.topic)
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(SpickingPalette.ink)
-                Spacer()
-                Text(statusLabel)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(statusColor.opacity(0.15), in: Capsule())
-            }
+                    .lineLimit(2)
 
-            Text(session.startedAt.formatted(date: .abbreviated, time: .shortened))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            if session.durationSeconds > 0 {
-                Text("\(session.durationSeconds / 60)분 \(session.durationSeconds % 60)초")
-                    .font(.caption)
+                Text(session.startedAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
+
+                if session.durationSeconds > 0 {
+                    Text("\(session.durationSeconds / 60)분 \(session.durationSeconds % 60)초")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-        }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
 
-    private var statusColor: Color {
-        switch session.status {
-        case .completed:
-            return .green
-        case .reviewing, .live:
-            return .blue
-        case .failed:
-            return .red
-        case .preparing:
-            return .orange
-        }
-    }
+            Spacer()
 
-    private var statusLabel: String {
-        switch session.status {
-        case .completed:
-            return "완료"
-        case .reviewing:
-            return "리뷰 중"
-        case .live:
-            return "대화 중"
-        case .failed:
-            return "실패"
-        case .preparing:
-            return "준비 중"
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(.secondary)
+                .padding(.top, 6)
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white.opacity(0.90))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(SpickingPalette.outline.opacity(0.88), lineWidth: 1)
+                )
+        )
     }
 }
