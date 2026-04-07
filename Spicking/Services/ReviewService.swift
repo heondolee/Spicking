@@ -11,7 +11,6 @@ struct ReviewService {
         let naturalRewrite: String
         let reasonKo: String
         let intentKo: String
-        let tags: [String]
     }
 
     func parseSuggestions(from rawText: String) throws -> [Suggestion] {

@@ -321,8 +321,7 @@ enum PromptLibrary {
           "minimalRewrite": "string",
           "naturalRewrite": "string",
           "reasonKo": "string",
-          "intentKo": "string",
-          "tags": ["string"]
+          "intentKo": "string"
         }
       ]
     }
@@ -331,7 +330,7 @@ enum PromptLibrary {
     - Focus only on user sentences that are worth improving.
     - "minimalRewrite" should stay close to the user's wording.
     - "naturalRewrite" should sound natural but still realistic for an English learner.
-    - "reasonKo" and "intentKo" must be in Korean.
-    - "tags" should be short Korean labels like ["의견", "이유", "완곡표현"].
+    - "intentKo" must be a natural Korean interpretation of what the user meant, written like a smooth translation rather than a label.
+    - "reasonKo" must be in Korean and explain concretely why the new sentence sounds smoother, clearer, or more natural in conversation.
     """
 }

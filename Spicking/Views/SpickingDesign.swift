@@ -5,10 +5,12 @@ enum SpickingPalette {
     static let ocean = Color(red: 0.14, green: 0.45, blue: 0.98)
     static let teal = Color(red: 0.10, green: 0.74, blue: 0.73)
     static let coral = Color(red: 0.98, green: 0.54, blue: 0.35)
+    static let graphite = Color(red: 0.42, green: 0.46, blue: 0.54)
     static let mist = Color(red: 0.93, green: 0.96, blue: 1.00)
     static let sand = Color(red: 0.99, green: 0.93, blue: 0.85)
     static let paper = Color(red: 0.98, green: 0.99, blue: 1.00)
     static let outline = Color(red: 0.72, green: 0.81, blue: 0.96)
+    static let neutralOutline = Color(red: 0.78, green: 0.80, blue: 0.84)
 }
 
 struct SpickingBackground: View {
@@ -110,12 +112,11 @@ struct BrandMark: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("Spicking")
-                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .font(.system(size: 28, weight: .black, design: .default))
                     .foregroundStyle(SpickingPalette.ink)
-                Text("your private speaking gym")
+                Text("Speak naturally. Pick what you'll use.")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(SpickingPalette.ocean.opacity(0.88))
-                    .textCase(.lowercase)
+                    .foregroundStyle(SpickingPalette.graphite.opacity(0.92))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -129,16 +130,28 @@ struct PromptChip: View {
     var body: some View {
         Text(title)
             .font(.subheadline.weight(.medium))
-            .foregroundStyle(SpickingPalette.ink)
+            .foregroundStyle(isSelected ? SpickingPalette.ocean : SpickingPalette.ink)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(
                 Capsule(style: .continuous)
-                    .fill(isSelected ? Color.white.opacity(0.94) : Color.white.opacity(0.68))
+                    .fill(
+                        isSelected
+                            ? LinearGradient(
+                                colors: [Color(red: 0.88, green: 0.94, blue: 1.0)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            : LinearGradient(
+                                colors: [Color.white.opacity(0.82), Color.white.opacity(0.68)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                    )
                     .overlay(
                         Capsule(style: .continuous)
                             .stroke(
-                                isSelected ? SpickingPalette.ocean.opacity(0.45) : SpickingPalette.outline.opacity(0.95),
+                                isSelected ? SpickingPalette.ocean.opacity(0.22) : SpickingPalette.outline.opacity(0.95),
                                 lineWidth: 1.2
                             )
                     )
@@ -187,6 +200,31 @@ struct PrimaryActionButtonStyle: ButtonStyle {
             )
             .shadow(color: SpickingPalette.ocean.opacity(0.24), radius: 18, y: 10)
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.easeOut(duration: 0.18), value: configuration.isPressed)
+    }
+}
+
+struct CompactPrimaryActionButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(
+                LinearGradient(
+                    colors: [SpickingPalette.ocean, SpickingPalette.teal],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(.white.opacity(0.26), lineWidth: 1)
+            )
+            .shadow(color: SpickingPalette.ocean.opacity(0.24), radius: 18, y: 10)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.18), value: configuration.isPressed)
     }
 }

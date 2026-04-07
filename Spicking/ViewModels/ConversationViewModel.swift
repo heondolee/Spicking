@@ -15,6 +15,8 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     @Published var errorMessage: String?
     @Published var assistantSpeaking = false
     @Published var isEndingSession = false
+    @Published var isPreparingInitialCoachTurn = true
+    @Published var isAwaitingInitialCoachResponse = true
 
     private let modelContext: ModelContext
     private let reviewService = ReviewService()
@@ -24,6 +26,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private var transcriptEntriesByRemoteID: [String: TranscriptEntry] = [:]
     private var nextSequence = 0
     private var hasStarted = false
+    private var activeUserRemoteItemID: String?
+    private var initialCoachPlaybackStarted = false
+    private var liveTranscriptSyncTask: Task<Void, Never>?
 
     init(topic: String, modelContext: ModelContext) {
         self.topic = topic
@@ -49,6 +54,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             statusMessage = "영어 코치와 연결 중이에요…"
             connectionState = .connecting
             try await audioEngine.start()
+            audioEngine.inputEnabled = false
             audioEngineService = audioEngine
             realtimeSessionService = realtimeService
 
@@ -120,7 +126,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             sourceOriginalText: suggestion.originalText,
             naturalRewrite: suggestion.naturalRewrite,
             usageNoteKo: suggestion.reasonKo,
-            tags: suggestion.tags,
+            tags: [],
             sourceSessionID: sessionID
         )
         modelContext.insert(phraseCard)
@@ -145,9 +151,17 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         audioEngine.onAudioPCMData = { [weak realtimeService] data in
             realtimeService?.appendInputAudio(data)
         }
+        audioEngine.onAssistantPlaybackChanged = { [weak self] isPlaying in
+            self?.assistantSpeaking = isPlaying
+        }
+        audioEngine.onAssistantPlaybackFinished = { [weak self] itemID in
+            Task { @MainActor [weak self] in
+                self?.handleAssistantPlaybackFinished(itemID: itemID)
+            }
+        }
         audioEngine.onSpeechDetected = { [weak self] in
             Task { @MainActor [weak self] in
-                await self?.handleLocalSpeechDetected()
+                await self?.handleUserSpeechDetected()
             }
         }
 
@@ -155,13 +169,15 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             self?.connectionState = state
         }
         realtimeService.onAssistantAudioChunk = { [weak self] itemID, base64 in
-            self?.assistantSpeaking = true
+            self?.handleAssistantOutputStarted()
             self?.audioEngineService?.enqueueAssistantAudio(base64: base64, itemID: itemID)
         }
         realtimeService.onAssistantSpeakingChanged = { [weak self] speaking in
-            self?.assistantSpeaking = speaking
+            guard speaking == false else { return }
+            self?.audioEngineService?.markAssistantStreamEnded()
         }
         realtimeService.onAssistantTranscriptUpdated = { [weak self] itemID, text, isFinal in
+            self?.handleAssistantOutputStarted()
             self?.upsertTranscript(remoteItemID: itemID, role: .assistant, text: text, isFinal: isFinal)
         }
         realtimeService.onUserTranscriptUpdated = { [weak self] itemID, text, isFinal in
@@ -169,7 +185,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         }
         realtimeService.onServerSpeechStarted = { [weak self] in
             Task { @MainActor [weak self] in
-                await self?.handleLocalSpeechDetected()
+                await self?.handleUserSpeechDetected()
             }
         }
         realtimeService.onError = { [weak self] message in
@@ -177,7 +193,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         }
     }
 
-    private func handleLocalSpeechDetected() async {
+    private func handleUserSpeechDetected() async {
+        guard isPreparingInitialCoachTurn == false else { return }
+        ensureUserTurnReserved()
         guard assistantSpeaking else { return }
 
         let playbackSnapshot = audioEngineService?.interruptPlayback()
@@ -193,16 +211,27 @@ final class ConversationViewModel: ObservableObject, Identifiable {
 
     private func upsertTranscript(remoteItemID: String, role: TranscriptRole, text: String, isFinal: Bool) {
         guard let sessionID = sessionRecord?.id else { return }
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return }
+        let cleanedFinal = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let streamingText = text.trimmingCharacters(in: .newlines)
+        guard !(isFinal ? cleanedFinal : streamingText).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         let entry: TranscriptEntry
         if let existing = transcriptEntriesByRemoteID[remoteItemID] {
             entry = existing
             if isFinal {
-                entry.text = cleaned
+                entry.text = cleanedFinal
             } else {
-                entry.text += cleaned
+                entry.text += streamingText
+            }
+        } else if role == .user, let activeUserRemoteItemID, let reservedEntry = transcriptEntriesByRemoteID[activeUserRemoteItemID] {
+            transcriptEntriesByRemoteID.removeValue(forKey: activeUserRemoteItemID)
+            reservedEntry.remoteItemID = remoteItemID
+            entry = reservedEntry
+            transcriptEntriesByRemoteID[remoteItemID] = entry
+            if isFinal {
+                entry.text = cleanedFinal
+            } else {
+                entry.text += streamingText
             }
         } else {
             nextSequence += 1
@@ -211,7 +240,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
                 remoteItemID: remoteItemID,
                 role: role,
                 sequence: nextSequence,
-                text: cleaned,
+                text: isFinal ? cleanedFinal : streamingText,
                 startedAt: .now
             )
             transcriptEntriesByRemoteID[remoteItemID] = entry
@@ -221,6 +250,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         entry.isFinal = isFinal
         if isFinal {
             entry.endedAt = .now
+            if role == .user {
+                activeUserRemoteItemID = nil
+            }
         }
 
         do {
@@ -229,18 +261,61 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             fail(with: error.localizedDescription)
         }
 
-        syncLiveTranscriptLines()
+        scheduleLiveTranscriptSync()
+    }
+
+    private func ensureUserTurnReserved() {
+        guard let sessionID = sessionRecord?.id else { return }
+        guard activeUserRemoteItemID == nil else { return }
+
+        nextSequence += 1
+        let placeholderID = "pending_user_\(UUID().uuidString)"
+        let entry = TranscriptEntry(
+            sessionID: sessionID,
+            remoteItemID: placeholderID,
+            role: .user,
+            sequence: nextSequence,
+            text: "",
+            startedAt: .now
+        )
+        transcriptEntriesByRemoteID[placeholderID] = entry
+        activeUserRemoteItemID = placeholderID
+        modelContext.insert(entry)
+        try? modelContext.save()
+    }
+
+    private func handleAssistantOutputStarted() {
+        if isAwaitingInitialCoachResponse {
+            isAwaitingInitialCoachResponse = false
+        }
+        initialCoachPlaybackStarted = true
+    }
+
+    private func handleAssistantPlaybackFinished(itemID: String) {
+        guard isPreparingInitialCoachTurn, initialCoachPlaybackStarted else { return }
+        isPreparingInitialCoachTurn = false
+        isAwaitingInitialCoachResponse = false
+        audioEngineService?.inputEnabled = true
+    }
+
+    private func scheduleLiveTranscriptSync() {
+        liveTranscriptSyncTask?.cancel()
+        liveTranscriptSyncTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 45_000_000)
+            guard let self, Task.isCancelled == false else { return }
+            self.syncLiveTranscriptLines()
+        }
     }
 
     private func syncLiveTranscriptLines() {
         let lines = transcriptEntriesByRemoteID.values
             .sorted { $0.sequence < $1.sequence }
-            .filter { $0.isFinal || $0.wasInterrupted }
+            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map {
                 LiveTranscriptLine(
                     id: $0.remoteItemID,
                     role: $0.role,
-                    text: $0.text,
+                    text: $0.text.trimmingCharacters(in: .newlines),
                     isFinal: $0.isFinal,
                     wasInterrupted: $0.wasInterrupted
                 )
@@ -274,7 +349,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
                 naturalRewrite: $0.naturalRewrite,
                 reasonKo: $0.reasonKo,
                 intentKo: $0.intentKo,
-                tags: $0.tags
+                tags: []
             )
         }
         for item in models {
@@ -290,7 +365,6 @@ final class ConversationViewModel: ObservableObject, Identifiable {
                 naturalRewrite: $0.naturalRewrite,
                 reasonKo: $0.reasonKo,
                 intentKo: $0.intentKo,
-                tags: $0.tags,
                 isSaved: $0.isSaved
             )
         }

@@ -22,7 +22,7 @@ enum PreviewData {
                 sourceOriginalText: "I understand but my think is different.",
                 naturalRewrite: "I get what you mean, but I see it a little differently.",
                 usageNoteKo: "상대 의견을 인정하면서 부드럽게 반대할 때 좋아요.",
-                tags: ["의견", "완곡표현"],
+                tags: [],
                 sourceSessionID: session.id
             )
         )

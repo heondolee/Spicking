@@ -6,6 +6,9 @@ import QuartzCore
 final class AudioEngineService {
     var onAudioPCMData: ((Data) -> Void)?
     var onSpeechDetected: (() -> Void)?
+    var onAssistantPlaybackChanged: ((Bool) -> Void)?
+    var onAssistantPlaybackFinished: ((String) -> Void)?
+    var inputEnabled = true
 
     private let inputEngine = AVAudioEngine()
     private let outputEngine = AVAudioEngine()
@@ -17,8 +20,17 @@ final class AudioEngineService {
     private var currentAssistantItemID: String?
     private var currentPlaybackStartedAt: CFTimeInterval?
     private var scheduledPlaybackMilliseconds: Double = 0
+    private var pendingAssistantBuffers = 0
+    private var currentAssistantStreamEnded = false
     private let speechThreshold: Float = 0.010
     private let speechDetectionCooldown: CFTimeInterval = 0.35
+    private var assistantPlaybackActive = false {
+        didSet {
+            if assistantPlaybackActive != oldValue {
+                onAssistantPlaybackChanged?(assistantPlaybackActive)
+            }
+        }
+    }
 
     func start() async throws {
         try configureAudioSession()
@@ -38,6 +50,10 @@ final class AudioEngineService {
         currentAssistantItemID = nil
         currentPlaybackStartedAt = nil
         scheduledPlaybackMilliseconds = 0
+        pendingAssistantBuffers = 0
+        currentAssistantStreamEnded = false
+        assistantPlaybackActive = false
+        inputEnabled = true
     }
 
     func enqueueAssistantAudio(base64: String, itemID: String) {
@@ -60,16 +76,29 @@ final class AudioEngineService {
             currentAssistantItemID = itemID
             currentPlaybackStartedAt = nil
             scheduledPlaybackMilliseconds = 0
+            pendingAssistantBuffers = 0
+            currentAssistantStreamEnded = false
         }
 
         let durationMilliseconds = Double(frameCount) / playbackFormat.sampleRate * 1_000
         scheduledPlaybackMilliseconds += durationMilliseconds
+        pendingAssistantBuffers += 1
+        assistantPlaybackActive = true
 
-        playerNode.scheduleBuffer(buffer, completionHandler: nil)
+        playerNode.scheduleBuffer(buffer) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handleScheduledBufferFinished()
+            }
+        }
         if !playerNode.isPlaying {
             playerNode.play()
             currentPlaybackStartedAt = CACurrentMediaTime()
         }
+    }
+
+    func markAssistantStreamEnded() {
+        currentAssistantStreamEnded = true
+        finishPlaybackIfPossible()
     }
 
     func interruptPlayback() -> RealtimePlaybackSnapshot? {
@@ -85,8 +114,31 @@ final class AudioEngineService {
         currentAssistantItemID = nil
         currentPlaybackStartedAt = nil
         scheduledPlaybackMilliseconds = 0
+        pendingAssistantBuffers = 0
+        currentAssistantStreamEnded = false
+        assistantPlaybackActive = false
 
         return RealtimePlaybackSnapshot(itemID: itemID, playedMilliseconds: playedMilliseconds)
+    }
+
+    private func handleScheduledBufferFinished() {
+        pendingAssistantBuffers = max(0, pendingAssistantBuffers - 1)
+        finishPlaybackIfPossible()
+    }
+
+    private func finishPlaybackIfPossible() {
+        guard currentAssistantStreamEnded, pendingAssistantBuffers == 0 else { return }
+        let finishedItemID = currentAssistantItemID
+        playerNode.stop()
+        playerNode.reset()
+        currentAssistantItemID = nil
+        currentPlaybackStartedAt = nil
+        scheduledPlaybackMilliseconds = 0
+        currentAssistantStreamEnded = false
+        assistantPlaybackActive = false
+        if let finishedItemID {
+            onAssistantPlaybackFinished?(finishedItemID)
+        }
     }
 
     private func configureAudioSession() throws {
@@ -118,6 +170,7 @@ final class AudioEngineService {
     }
 
     private func handleInputBuffer(_ buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat) {
+        guard inputEnabled else { return }
         detectSpeech(in: buffer)
 
         guard let converter = inputConverter else { return }

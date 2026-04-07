@@ -1,137 +1,183 @@
+import Combine
 import SwiftUI
+import UIKit
 
 struct LiveConversationView: View {
     @ObservedObject var viewModel: ConversationViewModel
     let onClose: () -> Void
+    @State private var showCancelAlert = false
+    @State private var pendingScrollTask: Task<Void, Never>?
 
     var body: some View {
-        ZStack {
-            SpickingBackground()
+        GeometryReader { geometry in
+            ZStack {
+                SpickingBackground()
 
-            VStack(spacing: 14) {
-                topBar
-                topicBadge
-                speakingState
-                transcriptArea
-                footer
+                ZStack(alignment: .bottom) {
+                    transcriptArea
+                        .frame(width: geometry.size.width - 40, height: geometry.size.height - 40)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 20)
+
+                    speakingState
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 20)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
         }
         .navigationBarBackButtonHidden()
-    }
-
-    private var topBar: some View {
-        HStack {
-            Button("닫기") {
+        .alert("대화를 취소할까요?", isPresented: $showCancelAlert) {
+            Button("계속 대화하기", role: .cancel) {}
+            Button("취소하고 나가기", role: .destructive) {
                 viewModel.close()
                 onClose()
             }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(SpickingPalette.ink)
-
-            Spacer()
+        } message: {
+            Text("지금 나가면 진행 중인 대화가 저장되지 않을 수 있어요.")
         }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    showCancelAlert = true
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+            }
+
+            ToolbarItem(placement: .principal) {
+                topicBadge
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task {
+                        await viewModel.endSession()
+                    }
+                } label: {
+                    Text("대화 종료")
+                }
+                .disabled(viewModel.isEndingSession)
+            }
+        }
+        .tint(.black)
     }
 
     private var topicBadge: some View {
-        HStack {
-            Text(viewModel.topic)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(SpickingPalette.ink)
-                .lineLimit(1)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.86))
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(SpickingPalette.outline.opacity(0.9), lineWidth: 1.1)
-                        )
-                )
-
-            Spacer()
-        }
+        Text(viewModel.topic)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(SpickingPalette.ink)
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(0.86))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(SpickingPalette.outline.opacity(0.9), lineWidth: 1.1)
+                    )
+            )
     }
 
     private var speakingState: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill((viewModel.assistantSpeaking ? SpickingPalette.ocean : SpickingPalette.coral).opacity(0.16))
-                    .frame(width: 54, height: 54)
+        HStack(spacing: 10) {
+            Image(systemName: (viewModel.isAwaitingInitialCoachResponse || viewModel.assistantSpeaking) ? "speaker.wave.2.fill" : "mic.fill")
+                .font(.headline.weight(.bold))
+                .foregroundStyle((viewModel.isAwaitingInitialCoachResponse || viewModel.assistantSpeaking) ? SpickingPalette.ocean : SpickingPalette.coral)
+                .symbolEffect(.pulse.byLayer, options: .repeating, value: viewModel.isAwaitingInitialCoachResponse || viewModel.assistantSpeaking)
 
-                Image(systemName: viewModel.assistantSpeaking ? "speaker.wave.3.fill" : "mic.fill")
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(viewModel.assistantSpeaking ? SpickingPalette.ocean : SpickingPalette.coral)
-                    .symbolEffect(.pulse.byLayer, options: .repeating, value: viewModel.assistantSpeaking)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(viewModel.assistantSpeaking ? "AI가 말하는 중" : "이제 말해보세요")
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(SpickingPalette.ink)
-                Text(viewModel.assistantSpeaking ? "중간에 바로 끼어들어도 자연스럽게 이어집니다." : "영어로 편하게 말하면 다음 질문이 이어집니다.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
+            Text(
+                viewModel.assistantSpeaking
+                    ? "AI가 말하는 중"
+                    : (viewModel.isAwaitingInitialCoachResponse ? "AI가 준비중이에요" : "이제 말해보세요")
+            )
+                .font(.headline.weight(.bold))
+                .foregroundStyle(SpickingPalette.ink)
         }
-        .glassCard(tint: Color.white.opacity(0.80))
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.92))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(.white.opacity(0.9), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.07), radius: 20, y: 12)
+        )
     }
 
     private var transcriptArea: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 14) {
-                    ForEach(viewModel.liveTranscriptLines) { line in
-                        TranscriptBubble(line: line)
-                            .id(line.id)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 20)
-            }
-            .background(
+            ZStack {
                 RoundedRectangle(cornerRadius: 32, style: .continuous)
                     .fill(Color.white.opacity(0.60))
                     .overlay(
                         RoundedRectangle(cornerRadius: 32, style: .continuous)
                             .stroke(.white.opacity(0.86), lineWidth: 1)
                     )
-            )
-            .shadow(color: .black.opacity(0.05), radius: 22, y: 12)
-            .onChange(of: viewModel.liveTranscriptLines) { _, lines in
-                if let last = lines.last?.id {
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        proxy.scrollTo(last, anchor: .bottom)
+                    .shadow(color: .black.opacity(0.05), radius: 22, y: 12)
+
+                ScrollView {
+                    LazyVStack(spacing: 14) {
+                        if viewModel.isAwaitingInitialCoachResponse {
+                            InitialCoachLoadingBubble()
+                        }
+                        ForEach(viewModel.liveTranscriptLines) { line in
+                            TranscriptBubble(line: line)
+                                .id(line.id)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 18)
+                    .padding(.bottom, 96)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onReceive(viewModel.$liveTranscriptLines.map(\.last?.id).removeDuplicates()) { lastID in
+                guard let lastID else { return }
+                pendingScrollTask?.cancel()
+                pendingScrollTask = Task {
+                    try? await Task.sleep(nanoseconds: 30_000_000)
+                    guard Task.isCancelled == false else { return }
+                    await MainActor.run {
+                        withAnimation(.easeOut(duration: 0.22)) {
+                            proxy.scrollTo(lastID, anchor: .bottom)
+                        }
                     }
                 }
             }
+            .onDisappear {
+                pendingScrollTask?.cancel()
+            }
         }
     }
+}
 
-    private var footer: some View {
-        Button {
-            Task {
-                await viewModel.endSession()
-            }
-        } label: {
-            if viewModel.isEndingSession {
-                ProgressView()
-            } else {
-                HStack(spacing: 10) {
-                    Image(systemName: "stop.circle.fill")
-                    Text("대화 종료")
-                        .font(.headline.weight(.semibold))
-                }
-            }
+private struct InitialCoachLoadingBubble: View {
+    var body: some View {
+        HStack {
+            LoadingEllipsisText()
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.white.opacity(0.95))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [SpickingPalette.ocean, SpickingPalette.teal],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
+            Spacer(minLength: 46)
         }
-        .buttonStyle(PrimaryActionButtonStyle())
-        .disabled(viewModel.isEndingSession)
+        .frame(maxWidth: .infinity)
+        .transition(.opacity.combined(with: .move(edge: .leading)))
     }
 }
 
@@ -156,28 +202,30 @@ private struct TranscriptBubble: View {
     }
 
     private var bubble: some View {
-        Text(line.text)
-            .font(.body)
-            .foregroundStyle(isAssistant ? .white : SpickingPalette.ink)
+        StreamingTranscriptLabel(
+            text: line.text,
+            tokenRevealDelay: isAssistant ? 55_000_000 : 35_000_000,
+            textColor: UIColor(isAssistant ? .white : SpickingPalette.ink)
+        )
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(background)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay(alignment: .bottomTrailing) {
-                if line.wasInterrupted {
+                if line.wasInterrupted && !isAssistant {
                     Text("중간 종료")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(isAssistant ? .white.opacity(0.9) : .secondary)
+                        .foregroundStyle(.secondary)
                         .padding(.trailing, 10)
                         .padding(.bottom, 8)
                 }
             }
+            .transition(.asymmetric(insertion: .move(edge: isAssistant ? .leading : .trailing).combined(with: .opacity), removal: .opacity))
     }
 
     @ViewBuilder
     private var background: some View {
         if isAssistant {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [SpickingPalette.ocean, SpickingPalette.teal],
@@ -186,13 +234,128 @@ private struct TranscriptBubble: View {
                     )
                 )
         } else {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Color.white.opacity(0.96))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .stroke(SpickingPalette.outline.opacity(0.9), lineWidth: 1.2)
                 )
                 .shadow(color: .black.opacity(0.03), radius: 10, y: 6)
+        }
+    }
+}
+
+private struct LoadingEllipsisText: View {
+    @State private var dotCount = 1
+
+    var body: some View {
+        Text(String(repeating: ".", count: dotCount))
+            .monospacedDigit()
+            .onAppear {
+                dotCount = 1
+            }
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 280_000_000)
+                    dotCount = dotCount % 3 + 1
+                }
+            }
+    }
+}
+
+private struct StreamingTranscriptLabel: UIViewRepresentable {
+    let text: String
+    let tokenRevealDelay: UInt64
+    let textColor: UIColor
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UILabel {
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.font = UIFont.preferredFont(forTextStyle: .body)
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = textColor
+        label.alpha = 0
+        label.setContentCompressionResistancePriority(.required, for: .vertical)
+        label.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        context.coordinator.attach(to: label)
+        return label
+    }
+
+    func updateUIView(_ uiView: UILabel, context: Context) {
+        uiView.textColor = textColor
+        context.coordinator.update(text: text, tokenRevealDelay: tokenRevealDelay)
+    }
+
+    static func dismantleUIView(_ uiView: UILabel, coordinator: Coordinator) {
+        coordinator.cancel()
+    }
+
+    final class Coordinator {
+        private weak var label: UILabel?
+        private var displayedText = ""
+        private var revealTask: Task<Void, Never>?
+        private var hasAnimatedIn = false
+
+        func attach(to label: UILabel) {
+            self.label = label
+        }
+
+        func update(text newValue: String, tokenRevealDelay: UInt64) {
+            guard let label else { return }
+            let oldTokens = tokenize(displayedText)
+            let newTokens = tokenize(newValue)
+
+            if hasAnimatedIn == false {
+                hasAnimatedIn = true
+                label.alpha = 0
+                UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseIn, .beginFromCurrentState]) {
+                    label.alpha = 1
+                }
+            }
+
+            revealTask?.cancel()
+
+            guard newTokens.count > oldTokens.count,
+                  Array(newTokens.prefix(oldTokens.count)) == oldTokens else {
+                displayedText = newValue
+                label.text = newValue
+                return
+            }
+
+            let additionalTokens = Array(newTokens.dropFirst(oldTokens.count))
+
+            revealTask = Task { [weak self] in
+                guard let self else { return }
+                for token in additionalTokens {
+                    if Task.isCancelled { return }
+                    try? await Task.sleep(nanoseconds: tokenRevealDelay)
+                    await MainActor.run {
+                        self.displayedText += token
+                        self.label?.text = self.displayedText
+                    }
+                }
+            }
+        }
+
+        func cancel() {
+            revealTask?.cancel()
+        }
+
+        private func tokenize(_ text: String) -> [String] {
+            let nsText = text as NSString
+            let pattern = #"\S+\s*"#
+            guard let regex = try? NSRegularExpression(pattern: pattern) else {
+                return text.isEmpty ? [] : [text]
+            }
+
+            return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap {
+                Range($0.range, in: text).map { String(text[$0]) }
+            }
         }
     }
 }

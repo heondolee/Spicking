@@ -8,7 +8,6 @@
 
 /* Begin PBXFileReference section */
 		C663607F2F852F6A004C17AB /* Spicking.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spicking.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		C663612D2F853C98004C17AB /* Spicking.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = Spicking.xcodeproj; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -43,11 +42,6 @@
 			children = (
 				C663607F2F852F6A004C17AB /* Spicking.app */,
 			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		C66361302F853C98004C17AB /* Products */ = {
-			isa = PBXGroup;
 			name = Products;
 			sourceTree = "<group>";
 		};
@@ -103,12 +97,6 @@
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C66360802F852F6A004C17AB /* Products */;
 			projectDirPath = "";
-			projectReferences = (
-				{
-					ProductGroup = C66361302F853C98004C17AB /* Products */;
-					ProjectRef = C663612D2F853C98004C17AB /* Spicking.xcodeproj */;
-				},
-			);
 			projectRoot = "";
 			targets = (
 				C663607E2F852F6A004C17AB /* Spicking */,

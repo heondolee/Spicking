@@ -22,16 +22,27 @@ struct SessionHistoryView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(session.topic)
-                            .font(.system(.title2, design: .rounded, weight: .bold))
-                            .foregroundStyle(SpickingPalette.ink)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Spacer()
 
-                        Text(session.startedAt.formatted(date: .abbreviated, time: .shortened))
+                            Text(
+                                session.startedAt.formatted(
+                                    Date.FormatStyle(date: .long, time: .shortened)
+                                        .locale(Locale(identifier: "ko_KR"))
+                                )
+                            )
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        HStack {
+                            PromptChip(title: session.topic, isSelected: true)
+                            Spacer(minLength: 0)
+                        }
                     }
-                    .glassCard(tint: Color.white.opacity(0.78))
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     if entries.isEmpty {
                         Text("복기할 대화 내용이 아직 없어요.")
@@ -79,12 +90,13 @@ private struct HistoryBubble: View {
             .foregroundStyle(isAssistant ? .white : SpickingPalette.ink)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .padding(isAssistant ? .leading : .trailing, 10)
             .background(backgroundStyle)
             .overlay(alignment: .bottomTrailing) {
-                if entry.wasInterrupted {
+                if entry.wasInterrupted && !isAssistant {
                     Text("중간 종료")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(isAssistant ? .white.opacity(0.9) : .secondary)
+                        .foregroundStyle(.secondary)
                         .padding(.trailing, 10)
                         .padding(.bottom, 8)
                 }
@@ -94,7 +106,7 @@ private struct HistoryBubble: View {
     @ViewBuilder
     private var backgroundStyle: some View {
         if isAssistant {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [SpickingPalette.ocean, SpickingPalette.teal],
@@ -103,10 +115,10 @@ private struct HistoryBubble: View {
                     )
                 )
         } else {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Color.white.opacity(0.95))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .stroke(SpickingPalette.outline.opacity(0.88), lineWidth: 1.2)
                 )
         }

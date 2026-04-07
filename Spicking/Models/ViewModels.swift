@@ -15,7 +15,6 @@ struct ReviewCard: Identifiable, Equatable {
     let naturalRewrite: String
     let reasonKo: String
     let intentKo: String
-    let tags: [String]
     var isSaved: Bool
 }
 

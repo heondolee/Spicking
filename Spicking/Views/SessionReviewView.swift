@@ -10,18 +10,11 @@ struct SessionReviewView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("세션 리뷰")
-                            .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                            .foregroundStyle(SpickingPalette.ink)
-                        Text("오늘 말한 문장을 더 자연스럽게 다듬어봤어요. 마음에 드는 표현만 저장해두세요.")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("이번 대화에서 바로 가져다 쓸 수 있는 표현만 골라 정리했어요.")
                             .foregroundStyle(.secondary)
-                        HStack(spacing: 10) {
-                            MetricChip(title: "추천 표현", value: "\(viewModel.reviewCards.count)개", tint: SpickingPalette.ocean)
-                            MetricChip(title: "저장 완료", value: "\(viewModel.reviewCards.filter(\.isSaved).count)개", tint: SpickingPalette.teal)
-                        }
                     }
-                    .glassCard(tint: Color.white.opacity(0.8))
+                    .padding(.top, 6)
 
                     if viewModel.reviewCards.isEmpty {
                         EmptyReviewState()
@@ -37,12 +30,33 @@ struct SessionReviewView: View {
                 .padding(.vertical, 16)
             }
         }
-        .navigationBarBackButtonHidden()
+        .navigationTitle("대화 리뷰")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                savedCountBadge
+            }
+
             ToolbarItem(placement: .topBarTrailing) {
                 Button("완료", action: onDone)
             }
         }
+    }
+
+    private var savedCountBadge: some View {
+        Text("저장 \(viewModel.reviewCards.filter(\.isSaved).count)개")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(SpickingPalette.ocean)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(SpickingPalette.ocean.opacity(0.10))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(SpickingPalette.ocean.opacity(0.18), lineWidth: 1)
+                    )
+            )
     }
 }
 
@@ -53,28 +67,18 @@ private struct ReviewCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             section(title: "내 문장", body: card.originalText)
-            section(title: "최소 수정", body: card.minimalRewrite)
             section(title: "자연스러운 표현", body: card.naturalRewrite)
-            section(title: "의도", body: card.intentKo)
-            section(title: "왜 바꾸면 좋은지", body: card.reasonKo)
+            section(title: "해석", body: card.intentKo)
+            section(title: "왜 이 표현이 더 자연스러운지", body: card.reasonKo)
 
-            if !card.tags.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(card.tags, id: \.self) { tag in
-                            Text(tag)
-                                .font(.caption.weight(.medium))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(SpickingPalette.ocean.opacity(0.12), in: Capsule())
-                        }
-                    }
+            Button(action: onSave) {
+                HStack(spacing: 8) {
+                    Image(systemName: card.isSaved ? "checkmark.circle.fill" : "square.and.arrow.down.fill")
+                    Text(card.isSaved ? "표현장에 저장됨" : "표현장에 저장")
+                        .font(.headline.weight(.semibold))
                 }
             }
-
-            Button(card.isSaved ? "저장됨" : "표현장에 저장", action: onSave)
-                .buttonStyle(.borderedProminent)
-                .tint(SpickingPalette.ink)
+            .buttonStyle(PrimaryActionButtonStyle())
                 .disabled(card.isSaved)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
