@@ -395,7 +395,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
 
         pendingAssistantResponseTask?.cancel()
         pendingAssistantResponseTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 800_000_000)
+            try? await Task.sleep(nanoseconds: 1_250_000_000)
             guard let self, Task.isCancelled == false else { return }
             guard self.assistantSpeaking == false else { return }
             guard self.activeUserRemoteItemID == nil else { return }
@@ -425,16 +425,76 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         let lines = transcriptEntriesByRemoteID.values
             .sorted { $0.sequence < $1.sequence }
             .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .map {
-                LiveTranscriptLine(
-                    id: $0.remoteItemID,
-                    role: $0.role,
-                    text: $0.text.trimmingCharacters(in: .newlines),
-                    isFinal: $0.isFinal,
-                    wasInterrupted: $0.wasInterrupted
-                )
+            .flatMap { entry in
+                makeLiveTranscriptLines(from: entry)
             }
         liveTranscriptLines = lines
+    }
+
+    private func makeLiveTranscriptLines(from entry: TranscriptEntry) -> [LiveTranscriptLine] {
+        let trimmed = entry.text.trimmingCharacters(in: .newlines)
+        guard !trimmed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+
+        if entry.role == .assistant, entry.isFinal {
+            let sentences = splitAssistantSentences(from: trimmed)
+            if sentences.count > 1 {
+                return sentences.enumerated().map { index, sentence in
+                    LiveTranscriptLine(
+                        id: "\(entry.remoteItemID)_segment_\(index)",
+                        role: entry.role,
+                        text: sentence,
+                        isFinal: true,
+                        wasInterrupted: entry.wasInterrupted
+                    )
+                }
+            }
+        }
+
+        return [
+            LiveTranscriptLine(
+                id: entry.remoteItemID,
+                role: entry.role,
+                text: trimmed,
+                isFinal: entry.isFinal,
+                wasInterrupted: entry.wasInterrupted
+            )
+        ]
+    }
+
+    private func splitAssistantSentences(from text: String) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let regex = try? NSRegularExpression(pattern: #"(?<=[.!?])\s+"#) else {
+            return [trimmed]
+        }
+
+        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+        let matches = regex.matches(in: trimmed, range: range)
+
+        guard !matches.isEmpty else { return [trimmed] }
+
+        var segments: [String] = []
+        var currentLocation = 0
+
+        for match in matches {
+            let segmentRange = NSRange(location: currentLocation, length: match.range.location - currentLocation)
+            if let range = Range(segmentRange, in: trimmed) {
+                let sentence = String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !sentence.isEmpty {
+                    segments.append(sentence)
+                }
+            }
+            currentLocation = match.range.location + match.range.length
+        }
+
+        let tailRange = NSRange(location: currentLocation, length: range.length - currentLocation)
+        if let range = Range(tailRange, in: trimmed) {
+            let sentence = String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sentence.isEmpty {
+                segments.append(sentence)
+            }
+        }
+
+        return segments.isEmpty ? [trimmed] : segments
     }
 
     private func requestReviewWithRetry() async throws -> String {

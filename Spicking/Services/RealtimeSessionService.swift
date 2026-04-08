@@ -77,7 +77,7 @@ final class RealtimeSessionService {
                             "type": "server_vad",
                             "threshold": 0.72,
                             "prefix_padding_ms": 250,
-                            "silence_duration_ms": 850,
+                            "silence_duration_ms": 1_250,
                             "interrupt_response": true,
                             "create_response": false,
                         ],
