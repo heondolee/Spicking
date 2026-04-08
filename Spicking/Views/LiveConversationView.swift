@@ -253,7 +253,15 @@ private struct TranscriptBubble: View {
     @ViewBuilder
     private var background: some View {
         if isAssistant {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            UnevenRoundedRectangle(
+                cornerRadii: .init(
+                    topLeading: 24,
+                    bottomLeading: 24,
+                    bottomTrailing: 24,
+                    topTrailing: 24
+                ),
+                style: .continuous
+            )
                 .fill(
                     LinearGradient(
                         colors: [SpickingPalette.ocean, SpickingPalette.teal],
@@ -262,10 +270,26 @@ private struct TranscriptBubble: View {
                     )
                 )
         } else {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            UnevenRoundedRectangle(
+                cornerRadii: .init(
+                    topLeading: 24,
+                    bottomLeading: 24,
+                    bottomTrailing: 24,
+                    topTrailing: 24
+                ),
+                style: .continuous
+            )
                 .fill(Color.white.opacity(0.96))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    UnevenRoundedRectangle(
+                        cornerRadii: .init(
+                            topLeading: 24,
+                            bottomLeading: 24,
+                            bottomTrailing: 24,
+                            topTrailing: 24
+                        ),
+                        style: .continuous
+                    )
                         .stroke(SpickingPalette.outline.opacity(0.9), lineWidth: 1.2)
                 )
                 .shadow(color: .black.opacity(0.03), radius: 10, y: 6)
@@ -317,8 +341,8 @@ private struct AssistantSentenceBubbleSequence: View {
             cornerRadii: .init(
                 topLeading: position.topRadius,
                 bottomLeading: position.bottomRadius,
-                bottomTrailing: position.bottomRadius,
-                topTrailing: position.topRadius
+                bottomTrailing: 24,
+                topTrailing: 24
             ),
             style: .continuous
         )

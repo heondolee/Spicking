@@ -106,7 +106,15 @@ private struct HistoryBubble: View {
     @ViewBuilder
     private var backgroundStyle: some View {
         if isAssistant {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            UnevenRoundedRectangle(
+                cornerRadii: .init(
+                    topLeading: 24,
+                    bottomLeading: 24,
+                    bottomTrailing: 24,
+                    topTrailing: 24
+                ),
+                style: .continuous
+            )
                 .fill(
                     LinearGradient(
                         colors: [SpickingPalette.ocean, SpickingPalette.teal],
@@ -115,10 +123,26 @@ private struct HistoryBubble: View {
                     )
                 )
         } else {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            UnevenRoundedRectangle(
+                cornerRadii: .init(
+                    topLeading: 24,
+                    bottomLeading: 24,
+                    bottomTrailing: 24,
+                    topTrailing: 24
+                ),
+                style: .continuous
+            )
                 .fill(Color.white.opacity(0.95))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    UnevenRoundedRectangle(
+                        cornerRadii: .init(
+                            topLeading: 24,
+                            bottomLeading: 24,
+                            bottomTrailing: 24,
+                            topTrailing: 24
+                        ),
+                        style: .continuous
+                    )
                         .stroke(SpickingPalette.outline.opacity(0.88), lineWidth: 1.2)
                 )
         }

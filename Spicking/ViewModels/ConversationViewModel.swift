@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import QuartzCore
 import SwiftData
 
 private enum UserTranscriptSource {
@@ -30,6 +31,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private var sessionRecord: ConversationSession?
     private var transcriptEntriesByRemoteID: [String: TranscriptEntry] = [:]
     private var locallyConfirmedUserItemIDs: Set<String> = []
+    private var locallyFinalizedUserItemIDs: Set<String> = []
+    private var stronglyConfirmedUserItemIDs: Set<String> = []
+    private var displayedUserItemIDs: Set<String> = []
     private var nextSequence = 0
     private var hasStarted = false
     private var activeUserRemoteItemID: String?
@@ -217,6 +221,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         ensureUserTurnReserved()
         activeUserTurnDetectedSpeech = true
         activeUserSpeechDetectionCount += 1
+        if activeUserSpeechDetectionCount >= 3, let activeUserRemoteItemID {
+            stronglyConfirmedUserItemIDs.insert(activeUserRemoteItemID)
+        }
         guard assistantSpeaking else { return }
 
         let playbackSnapshot = audioEngineService?.interruptPlayback()
@@ -251,6 +258,18 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             if locallyConfirmedUserItemIDs.contains(activeUserRemoteItemID) {
                 locallyConfirmedUserItemIDs.remove(activeUserRemoteItemID)
                 locallyConfirmedUserItemIDs.insert(remoteItemID)
+            }
+            if locallyFinalizedUserItemIDs.contains(activeUserRemoteItemID) {
+                locallyFinalizedUserItemIDs.remove(activeUserRemoteItemID)
+                locallyFinalizedUserItemIDs.insert(remoteItemID)
+            }
+            if stronglyConfirmedUserItemIDs.contains(activeUserRemoteItemID) {
+                stronglyConfirmedUserItemIDs.remove(activeUserRemoteItemID)
+                stronglyConfirmedUserItemIDs.insert(remoteItemID)
+            }
+            if displayedUserItemIDs.contains(activeUserRemoteItemID) {
+                displayedUserItemIDs.remove(activeUserRemoteItemID)
+                displayedUserItemIDs.insert(remoteItemID)
             }
             reservedEntry.remoteItemID = remoteItemID
             entry = reservedEntry
@@ -306,6 +325,10 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         activeUserLocalTranscriptFinalized = activeUserLocalTranscriptFinalized || isFinal
         activeUserHadVisibleLocalTranscript = true
         locallyConfirmedUserItemIDs.insert(activeUserRemoteItemID)
+        if isFinal {
+            locallyFinalizedUserItemIDs.insert(activeUserRemoteItemID)
+            stronglyConfirmedUserItemIDs.insert(activeUserRemoteItemID)
+        }
 
         upsertTranscript(
             remoteItemID: activeUserRemoteItemID,
@@ -428,11 +451,13 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             return true
         }
 
-        return activeUserTranscriptSource == .local && activeUserLocalTranscriptFinalized && cleaned.count >= 6
+        return activeUserTranscriptSource == .local
+            && activeUserLocalTranscriptFinalized
+            && cleaned.count >= 6
     }
 
     private func hasConfirmedUserSpeech(for text: String) -> Bool {
-        if activeUserSpeechDetectionCount >= 2 {
+        if let activeUserRemoteItemID, stronglyConfirmedUserItemIDs.contains(activeUserRemoteItemID) {
             return true
         }
 
@@ -456,6 +481,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             modelContext.delete(entry)
         }
         locallyConfirmedUserItemIDs.remove(remoteItemID)
+        locallyFinalizedUserItemIDs.remove(remoteItemID)
+        stronglyConfirmedUserItemIDs.remove(remoteItemID)
+        displayedUserItemIDs.remove(remoteItemID)
         if activeUserRemoteItemID == remoteItemID {
             activeUserRemoteItemID = nil
         }
@@ -485,13 +513,14 @@ final class ConversationViewModel: ObservableObject, Identifiable {
 
         pendingAssistantResponseTask?.cancel()
         pendingAssistantResponseTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_700_000_000)
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
             guard let self, Task.isCancelled == false else { return }
             guard self.assistantSpeaking == false else { return }
             guard self.activeUserRemoteItemID == nil else { return }
             guard self.lastFinalizedUserRemoteItemID == lastFinalizedUserRemoteItemID else { return }
             guard self.lastAssistantResponseRequestedForUserItemID != lastFinalizedUserRemoteItemID else { return }
             guard self.canRespond(to: lastFinalizedUserRemoteItemID) else { return }
+            guard await self.waitForStableUserSilence() else { return }
 
             do {
                 self.lastAssistantResponseRequestedForUserItemID = lastFinalizedUserRemoteItemID
@@ -509,8 +538,40 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         }
         let cleaned = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.isEmpty == false else { return false }
-        guard locallyConfirmedUserItemIDs.contains(remoteItemID) else { return false }
+        guard shouldRespondToUserItem(remoteItemID, text: cleaned) else { return false }
         return hasSufficientSpokenContent(cleaned)
+    }
+
+    private func shouldRespondToUserItem(_ remoteItemID: String, text: String) -> Bool {
+        guard displayedUserItemIDs.contains(remoteItemID) else { return false }
+        guard locallyConfirmedUserItemIDs.contains(remoteItemID) else { return false }
+        guard stronglyConfirmedUserItemIDs.contains(remoteItemID) else { return false }
+
+        let wordCount = text.split(whereSeparator: \.isWhitespace).count
+        return wordCount >= 3 || text.count >= 14
+    }
+
+    private func waitForStableUserSilence() async -> Bool {
+        let requiredSilence: CFTimeInterval = 1.4
+        let deadline = CACurrentMediaTime() + 5.0
+
+        while Task.isCancelled == false {
+            guard assistantSpeaking == false else { return false }
+            guard activeUserRemoteItemID == nil else { return false }
+
+            let silence = audioEngineService?.secondsSinceLastSpeechActivity ?? requiredSilence
+            if silence >= requiredSilence {
+                return true
+            }
+
+            if CACurrentMediaTime() >= deadline {
+                return false
+            }
+
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+
+        return false
     }
 
     private func scheduleLiveTranscriptSync() {
@@ -536,6 +597,11 @@ final class ConversationViewModel: ObservableObject, Identifiable {
                 )
             }
         liveTranscriptLines = lines
+        displayedUserItemIDs = Set(
+            lines
+                .filter { $0.role == .user && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+                .map(\.id)
+        )
     }
 
     private func requestReviewWithRetry() async throws -> String {
