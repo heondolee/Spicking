@@ -1,4 +1,6 @@
 import AVFoundation
+import Combine
+import CryptoKit
 import SwiftData
 import SwiftUI
 
@@ -17,7 +19,7 @@ struct SessionHistoryView: View {
     @Query private var suggestions: [ReviewSuggestion]
     @Query private var phraseCards: [PhraseCard]
 
-    @State private var speechPlayer = BubbleSpeechPlayer()
+    @StateObject private var speechPlayer = BubbleSpeechPlayer()
 
     init(session: ConversationSession, onDone: (() -> Void)? = nil) {
         self.session = session
@@ -123,12 +125,14 @@ struct SessionHistoryView: View {
                                 entry: entry,
                                 suggestion: suggestion(for: entry),
                                 savedExpressions: savedExpressions,
-                                onSpeak: { text in
-                                    speechPlayer.speak(text: text)
+                                onSpeak: { bubbleID, text in
+                                    speechPlayer.speak(bubbleID: bubbleID, text: text)
                                 },
                                 onSavePhrase: { suggestion, phrase in
                                     savePhrase(from: suggestion, phrase: phrase)
-                                }
+                                },
+                                activeBubbleID: speechPlayer.activeBubbleID,
+                                loadingBubbleID: speechPlayer.loadingBubbleID
                             )
                         }
                     }
@@ -185,8 +189,10 @@ private struct HistoryTranscriptBubble: View {
     let entry: TranscriptEntry
     let suggestion: ReviewSuggestion?
     let savedExpressions: Set<String>
-    let onSpeak: (String) -> Void
+    let onSpeak: (String, String) -> Void
     let onSavePhrase: (ReviewSuggestion, RecommendedPhrase) -> Void
+    let activeBubbleID: String?
+    let loadingBubbleID: String?
 
     private var bubbleTextMaxWidth: CGFloat {
         320
@@ -194,6 +200,10 @@ private struct HistoryTranscriptBubble: View {
 
     private var isAssistant: Bool {
         entry.role == .assistant
+    }
+
+    private var bubbleID: String {
+        "entry-\(entry.id.uuidString)"
     }
 
     private var displayedText: String {
@@ -239,13 +249,16 @@ private struct HistoryTranscriptBubble: View {
     private var bubble: some View {
         if isAssistant {
             HistoryAssistantSentenceBubbleSequence(
+                entryID: entry.id.uuidString,
                 text: displayedText,
                 bubbleTextMaxWidth: bubbleTextMaxWidth,
-                onSpeak: onSpeak
+                onSpeak: onSpeak,
+                activeBubbleID: activeBubbleID,
+                loadingBubbleID: loadingBubbleID
             )
         } else {
             Button {
-                onSpeak(displayedText)
+                onSpeak(bubbleID, displayedText)
             } label: {
                 transcriptBubbleBody(text: displayedText)
             }
@@ -254,14 +267,34 @@ private struct HistoryTranscriptBubble: View {
     }
 
     private func transcriptBubbleBody(text: String) -> some View {
-        HistoryBubbleTextBlock(
+        let isSpeaking = activeBubbleID == bubbleID
+        let isLoading = loadingBubbleID == bubbleID
+
+        return HistoryBubbleTextBlock(
             text: text,
             maxWidth: bubbleTextMaxWidth,
             foregroundColor: isAssistant ? .white : SpickingPalette.ink
         )
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(background)
+        .background(background(isSpeaking: isSpeaking || isLoading))
+        .overlay(alignment: .topTrailing) {
+            if isSpeaking || isLoading {
+                HStack(spacing: 6) {
+                    Image(systemName: isLoading ? "waveform" : "speaker.wave.2.fill")
+                    Text(isLoading ? "읽는 중…" : "재생 중")
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(isAssistant ? Color.white.opacity(0.96) : SpickingPalette.ocean)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(isAssistant ? Color.white.opacity(0.18) : SpickingPalette.ocean.opacity(0.12))
+                )
+                .padding(10)
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             if entry.wasInterrupted && !isAssistant {
                 Text("중간 종료")
@@ -274,7 +307,7 @@ private struct HistoryTranscriptBubble: View {
     }
 
     @ViewBuilder
-    private var background: some View {
+    private func background(isSpeaking: Bool) -> some View {
         if isAssistant {
             UnevenRoundedRectangle(
                 cornerRadii: .init(
@@ -292,6 +325,20 @@ private struct HistoryTranscriptBubble: View {
                     endPoint: .bottomTrailing
                 )
             )
+            .overlay {
+                if isSpeaking {
+                    UnevenRoundedRectangle(
+                        cornerRadii: .init(
+                            topLeading: 24,
+                            bottomLeading: 24,
+                            bottomTrailing: 24,
+                            topTrailing: 24
+                        ),
+                        style: .continuous
+                    )
+                    .stroke(Color.white.opacity(0.4), lineWidth: 1.6)
+                }
+            }
         } else {
             UnevenRoundedRectangle(
                 cornerRadii: .init(
@@ -313,7 +360,7 @@ private struct HistoryTranscriptBubble: View {
                     ),
                     style: .continuous
                 )
-                .stroke(SpickingPalette.outline.opacity(0.9), lineWidth: 1.2)
+                .stroke(isSpeaking ? SpickingPalette.ocean.opacity(0.92) : SpickingPalette.outline.opacity(0.9), lineWidth: isSpeaking ? 1.8 : 1.2)
             )
             .shadow(color: .black.opacity(0.03), radius: 10, y: 6)
         }
@@ -360,9 +407,12 @@ private struct HistoryTranscriptBubble: View {
 }
 
 private struct HistoryAssistantSentenceBubbleSequence: View {
+    let entryID: String
     let text: String
     let bubbleTextMaxWidth: CGFloat
-    let onSpeak: (String) -> Void
+    let onSpeak: (String, String) -> Void
+    let activeBubbleID: String?
+    let loadingBubbleID: String?
 
     private var renderedSegments: [String] {
         sentenceSegments(from: text)
@@ -371,12 +421,15 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(renderedSegments.enumerated()), id: \.offset) { index, sentence in
+                let bubbleID = "assistant-\(entryID)-\(index)"
                 Button {
-                    onSpeak(sentence)
+                    onSpeak(bubbleID, sentence)
                 } label: {
                     assistantBubble(
                         text: sentence,
-                        position: bubblePosition(for: index, totalCount: renderedSegments.count)
+                        position: bubblePosition(for: index, totalCount: renderedSegments.count),
+                        isSpeaking: activeBubbleID == bubbleID,
+                        isLoading: loadingBubbleID == bubbleID
                     )
                 }
                 .buttonStyle(.plain)
@@ -385,8 +438,8 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
         .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .leading)
     }
 
-    private func assistantBubble(text: String, position: HistoryBubbleStackPosition) -> some View {
-        HistoryBubbleTextBlock(
+    private func assistantBubble(text: String, position: HistoryBubbleStackPosition, isSpeaking: Bool, isLoading: Bool) -> some View {
+        return HistoryBubbleTextBlock(
             text: text,
             maxWidth: bubbleTextMaxWidth,
             foregroundColor: .white
@@ -411,6 +464,37 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
                 )
             )
         )
+        .overlay {
+            if isSpeaking || isLoading {
+                UnevenRoundedRectangle(
+                    cornerRadii: .init(
+                        topLeading: position.topRadius,
+                        bottomLeading: position.bottomRadius,
+                        bottomTrailing: 24,
+                        topTrailing: 24
+                    ),
+                    style: .continuous
+                )
+                .stroke(Color.white.opacity(0.42), lineWidth: 1.6)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if isSpeaking || isLoading {
+                HStack(spacing: 6) {
+                    Image(systemName: isLoading ? "waveform" : "speaker.wave.2.fill")
+                    Text(isLoading ? "읽는 중…" : "재생 중")
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.96))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.16))
+                )
+                .padding(10)
+            }
+        }
     }
 
     private func bubblePosition(for index: Int, totalCount: Int) -> HistoryBubbleStackPosition {
@@ -495,25 +579,175 @@ private struct HistoryBubbleTextBlock: View {
 }
 
 @MainActor
-private final class BubbleSpeechPlayer: NSObject {
+private final class BubbleSpeechPlayer: NSObject, ObservableObject {
+    @Published private(set) var activeBubbleID: String?
+    @Published private(set) var loadingBubbleID: String?
+
     private let synthesizer = AVSpeechSynthesizer()
+    private var audioPlayer: AVAudioPlayer?
+    private var playbackTask: Task<Void, Never>?
 
     override init() {
         super.init()
         synthesizer.delegate = self
     }
 
-    func speak(text: String) {
+    func speak(bubbleID: String, text: String) {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
 
+        if activeBubbleID == bubbleID || loadingBubbleID == bubbleID {
+            stop()
+            return
+        }
+
+        stop()
+        loadingBubbleID = bubbleID
+        playbackTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let audioURL = try await self.fetchSpeechURL(for: cleaned)
+                try await self.playRemoteAudio(url: audioURL, bubbleID: bubbleID)
+            } catch {
+                await self.playFallbackSpeech(text: cleaned, bubbleID: bubbleID)
+            }
+        }
+    }
+
+    func stop() {
+        playbackTask?.cancel()
+        playbackTask = nil
+        audioPlayer?.stop()
+        audioPlayer = nil
         synthesizer.stopSpeaking(at: .immediate)
-        let utterance = AVSpeechUtterance(string: cleaned)
+        activeBubbleID = nil
+        loadingBubbleID = nil
+    }
+
+    private func fetchSpeechURL(for text: String) async throws -> URL {
+        let configuration = try AppConfigurationLoader.load()
+        guard var components = URLComponents(url: configuration.workerURL, resolvingAgainstBaseURL: false) else {
+            throw URLError(.badURL)
+        }
+        components.path = "/audio/speech"
+        guard let speechURL = components.url else {
+            throw URLError(.badURL)
+        }
+        let cacheURL = cachedAudioURL(for: text)
+        let ttsVoice = preferredTTSVoice(from: configuration.voice)
+        let ttsInstructions = """
+        Speak in warm, natural, conversational American English like a friendly speaking coach.
+        Sound fluid and human, not like a narrator or assistant reading aloud.
+        Keep the pacing relaxed and clear, with natural pauses and gentle emphasis.
+        """
+
+        if FileManager.default.fileExists(atPath: cacheURL.path) {
+            return cacheURL
+        }
+
+        var request = URLRequest(url: speechURL)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(configuration.appSharedSecret)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "input": text,
+            "voice": ttsVoice,
+            "model": "gpt-4o-mini-tts",
+            "response_format": "wav",
+            "speed": 0.96,
+            "instructions": ttsInstructions
+        ])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        try FileManager.default.createDirectory(
+            at: cacheURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: cacheURL, options: .atomic)
+        return cacheURL
+    }
+
+    private func playRemoteAudio(url: URL, bubbleID: String) async throws {
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        try AVAudioSession.sharedInstance().setActive(true)
+
+        let player = try AVAudioPlayer(contentsOf: url)
+        player.delegate = self
+        player.prepareToPlay()
+        audioPlayer = player
+        loadingBubbleID = nil
+        activeBubbleID = bubbleID
+        player.play()
+    }
+
+    private func playFallbackSpeech(text: String, bubbleID: String) async {
+        let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = 0.48
         utterance.pitchMultiplier = 1.0
+        loadingBubbleID = nil
+        activeBubbleID = bubbleID
         synthesizer.speak(utterance)
+    }
+
+    private func cachedAudioURL(for text: String) -> URL {
+        let hash = text.sha256Hex
+        let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(filePath: NSTemporaryDirectory())
+        return cachesDirectory
+            .appending(path: "BubbleAudio", directoryHint: .isDirectory)
+            .appending(path: "\(hash).wav")
+    }
+
+    private func preferredTTSVoice(from configuredVoice: String) -> String {
+        switch configuredVoice {
+        case "marin", "cedar":
+            return configuredVoice
+        default:
+            return "cedar"
+        }
     }
 }
 
-extension BubbleSpeechPlayer: AVSpeechSynthesizerDelegate {}
+extension BubbleSpeechPlayer: AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor [weak self] in
+            self?.activeBubbleID = nil
+            self?.loadingBubbleID = nil
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor [weak self] in
+            self?.activeBubbleID = nil
+            self?.loadingBubbleID = nil
+        }
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor [weak self] in
+            self?.audioPlayer = nil
+            self?.activeBubbleID = nil
+            self?.loadingBubbleID = nil
+        }
+    }
+
+    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        Task { @MainActor [weak self] in
+            self?.audioPlayer = nil
+            self?.activeBubbleID = nil
+            self?.loadingBubbleID = nil
+        }
+    }
+}
+
+private extension String {
+    var sha256Hex: String {
+        let digest = SHA256.hash(data: Data(utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+}
