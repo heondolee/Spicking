@@ -33,6 +33,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private var hasStarted = false
     private var activeUserRemoteItemID: String?
     private var activeUserTranscriptSource: UserTranscriptSource?
+    private var activeUserLocalTranscriptFinalized = false
     private var initialCoachPlaybackStarted = false
     private var liveTranscriptSyncTask: Task<Void, Never>?
     private var pendingAssistantResponseTask: Task<Void, Never>?
@@ -192,8 +193,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             self?.audioEngineService?.markAssistantStreamEnded()
         }
         realtimeService.onAssistantTranscriptUpdated = { [weak self] itemID, text, isFinal in
-            self?.handleAssistantOutputStarted()
-            self?.upsertTranscript(remoteItemID: itemID, role: .assistant, text: text, isFinal: isFinal)
+            self?.handleAssistantTranscript(itemID: itemID, text: text, isFinal: isFinal)
         }
         realtimeService.onUserTranscriptUpdated = { [weak self] itemID, text, isFinal in
             if isFinal {
@@ -272,6 +272,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             if role == .user {
                 activeUserRemoteItemID = nil
                 activeUserTranscriptSource = nil
+                activeUserLocalTranscriptFinalized = false
             }
         }
 
@@ -284,7 +285,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         scheduleLiveTranscriptSync()
     }
 
-    private func handleLiveUserTranscription(text: String, isFinal _: Bool) {
+    private func handleLiveUserTranscription(text: String, isFinal: Bool) {
         guard isPreparingInitialCoachTurn == false else { return }
         guard activeUserTranscriptSource != .remote else { return }
         ensureUserTurnReserved()
@@ -292,6 +293,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
         activeUserTranscriptSource = .local
+        activeUserLocalTranscriptFinalized = activeUserLocalTranscriptFinalized || isFinal
 
         upsertTranscript(
             remoteItemID: activeUserRemoteItemID,
@@ -319,6 +321,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         transcriptEntriesByRemoteID[placeholderID] = entry
         activeUserRemoteItemID = placeholderID
         activeUserTranscriptSource = nil
+        activeUserLocalTranscriptFinalized = false
         modelContext.insert(entry)
         try? modelContext.save()
     }
@@ -343,6 +346,19 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         scheduleAssistantReply()
     }
 
+    private func handleAssistantTranscript(itemID: String, text: String, isFinal: Bool) {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        handleAssistantOutputStarted()
+        upsertTranscript(
+            remoteItemID: itemID,
+            role: .assistant,
+            text: cleaned,
+            isFinal: isFinal,
+            replaceStreamingText: isFinal
+        )
+    }
+
     private func handleAssistantOutputStarted() {
         pendingAssistantResponseTask?.cancel()
         finalizeActiveUserDraftIfNeeded()
@@ -360,20 +376,26 @@ final class ConversationViewModel: ObservableObject, Identifiable {
               let entry = transcriptEntriesByRemoteID[activeUserRemoteItemID],
               entry.role == .user
         else { return }
+        let trimmed = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldKeepDraft = trimmed.isEmpty == false
 
-        // If the assistant starts speaking before the user's turn was finalized,
-        // treat the draft as interrupted and discard it instead of leaving a partial bubble.
-        transcriptEntriesByRemoteID.removeValue(forKey: activeUserRemoteItemID)
-        modelContext.delete(entry)
+        if shouldKeepDraft, trimmed.isEmpty == false {
+            entry.text = trimmed
+            entry.isFinal = true
+            entry.endedAt = .now
+        } else {
+            transcriptEntriesByRemoteID.removeValue(forKey: activeUserRemoteItemID)
+            modelContext.delete(entry)
+        }
 
         self.activeUserRemoteItemID = nil
         activeUserTranscriptSource = nil
+        activeUserLocalTranscriptFinalized = false
         try? modelContext.save()
         scheduleLiveTranscriptSync()
     }
 
     private func handleAssistantPlaybackFinished(itemID: String) {
-        _ = itemID
         guard isPreparingInitialCoachTurn, initialCoachPlaybackStarted else { return }
         isPreparingInitialCoachTurn = false
         isAwaitingInitialCoachResponse = false

@@ -45,6 +45,10 @@ final class AudioEngineService {
         }
     }
 
+    var hasRecentSpeechActivity: Bool {
+        CACurrentMediaTime() - lastSpeechDetectedAt <= 1.7
+    }
+
     func start() async throws {
         try configureAudioSession()
         await configureSpeechRecognition()

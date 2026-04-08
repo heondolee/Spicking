@@ -276,33 +276,30 @@ private struct TranscriptBubble: View {
 private struct AssistantSentenceBubbleSequence: View {
     let line: LiveTranscriptLine
     let bubbleTextMaxWidth: CGFloat
-    @State private var visibleCount = 0
-    @State private var revealTask: Task<Void, Never>?
-
-    private var sentences: [String] {
-        splitSentences(from: line.text)
-    }
+    @State private var renderedSegments: [String] = []
+    @State private var processedText = ""
+    @State private var pendingSentenceBreak = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(sentences.prefix(visibleCount).enumerated()), id: \.offset) { _, sentence in
-                assistantBubble(text: sentence)
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(renderedSegments.enumerated()), id: \.offset) { index, sentence in
+                assistantBubble(
+                    text: sentence,
+                    position: bubblePosition(for: index, totalCount: renderedSegments.count)
+                )
                     .transition(.opacity)
             }
         }
         .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .leading)
         .onAppear {
-            syncVisibleCount(animated: false)
+            applyTranscript(line.text, animated: false)
         }
         .onChange(of: line.text) { _, _ in
-            syncVisibleCount(animated: true)
-        }
-        .onDisappear {
-            revealTask?.cancel()
+            applyTranscript(line.text, animated: true)
         }
     }
 
-    private func assistantBubble(text: String) -> some View {
+    private func assistantBubble(text: String, position: BubbleStackPosition) -> some View {
         StreamingTranscriptLabel(
             text: text,
             tokenRevealDelay: 55_000_000,
@@ -311,82 +308,133 @@ private struct AssistantSentenceBubbleSequence: View {
         .frame(maxWidth: bubbleTextMaxWidth, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [SpickingPalette.ocean, SpickingPalette.teal],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+        .background(bubbleBackground(for: position))
+    }
+
+    @ViewBuilder
+    private func bubbleBackground(for position: BubbleStackPosition) -> some View {
+        UnevenRoundedRectangle(
+            cornerRadii: .init(
+                topLeading: position.topRadius,
+                bottomLeading: position.bottomRadius,
+                bottomTrailing: position.bottomRadius,
+                topTrailing: position.topRadius
+            ),
+            style: .continuous
+        )
+        .fill(
+            LinearGradient(
+                colors: [SpickingPalette.ocean, SpickingPalette.teal],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
         )
     }
 
-    private func syncVisibleCount(animated: Bool) {
-        revealTask?.cancel()
-        let targetSentences = sentences
-        let targetCount = targetSentences.count
-
-        guard targetCount > 0 else {
-            visibleCount = 0
-            return
-        }
-
-        if visibleCount == 0 || animated == false {
-            visibleCount = 1
-        }
-
-        guard targetCount > visibleCount else {
-            return
-        }
-
-        revealTask = Task {
-            for nextCount in (visibleCount + 1)...targetCount {
-                if Task.isCancelled { return }
-                await MainActor.run {
-                    withAnimation(.easeIn(duration: 0.24)) {
-                        visibleCount = nextCount
-                    }
-                }
-                try? await Task.sleep(nanoseconds: 160_000_000)
-            }
+    private func bubblePosition(for index: Int, totalCount: Int) -> BubbleStackPosition {
+        switch totalCount {
+        case 0:
+            return .single
+        case 1:
+            return .single
+        default:
+            if index == 0 { return .top }
+            if index == totalCount - 1 { return .bottom }
+            return .middle
         }
     }
 
-    private func splitSentences(from text: String) -> [String] {
+    private func applyTranscript(_ text: String, animated: Bool) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let regex = try? NSRegularExpression(pattern: #"(?<=[.!?])\s+"#) else {
-            return trimmed.isEmpty ? [] : [trimmed]
+        guard trimmed.isEmpty == false else {
+            renderedSegments = []
+            processedText = ""
+            pendingSentenceBreak = false
+            return
         }
 
-        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
-        let matches = regex.matches(in: trimmed, range: range)
-        guard !matches.isEmpty else { return trimmed.isEmpty ? [] : [trimmed] }
+        if trimmed.hasPrefix(processedText) == false {
+            renderedSegments = []
+            processedText = ""
+            pendingSentenceBreak = false
+        }
 
-        var segments: [String] = []
-        var currentLocation = 0
+        let suffix = String(trimmed.dropFirst(processedText.count))
+        guard suffix.isEmpty == false else { return }
 
-        for match in matches {
-            let segmentRange = NSRange(location: currentLocation, length: match.range.location - currentLocation)
-            if let range = Range(segmentRange, in: trimmed) {
-                let sentence = String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !sentence.isEmpty {
-                    segments.append(sentence)
-                }
+        appendIncremental(suffix, animated: animated)
+        processedText = trimmed
+    }
+
+    private func appendIncremental(_ suffix: String, animated: Bool) {
+        for character in suffix {
+            if renderedSegments.isEmpty {
+                appendNewSegment("", animated: false)
             }
-            currentLocation = match.range.location + match.range.length
-        }
 
-        let tailRange = NSRange(location: currentLocation, length: range.length - currentLocation)
-        if let range = Range(tailRange, in: trimmed) {
-            let sentence = String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !sentence.isEmpty {
-                segments.append(sentence)
+            if pendingSentenceBreak, character.isWhitespace == false {
+                appendNewSegment(String(character), animated: animated)
+                pendingSentenceBreak = false
+                continue
+            }
+
+            if renderedSegments.isEmpty {
+                appendNewSegment(String(character), animated: false)
+            } else {
+                renderedSegments[renderedSegments.count - 1].append(character)
+            }
+
+            if character == "." || character == "!" || character == "?" {
+                pendingSentenceBreak = true
             }
         }
 
-        return segments.isEmpty ? [trimmed] : segments
+        renderedSegments = renderedSegments
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+    }
+
+    private func appendNewSegment(_ text: String, animated: Bool) {
+        let insertion = {
+            renderedSegments.append(text)
+        }
+
+        if animated {
+            withAnimation(.easeIn(duration: 0.24)) {
+                insertion()
+            }
+        } else {
+            insertion()
+        }
+    }
+}
+
+private enum BubbleStackPosition {
+    case single
+    case top
+    case middle
+    case bottom
+
+    var topRadius: CGFloat {
+        switch self {
+        case .single:
+            return 24
+        case .top:
+            return 24
+        case .middle, .bottom:
+            return 12
+        }
+    }
+
+    var bottomRadius: CGFloat {
+        switch self {
+        case .single:
+            return 24
+        case .bottom:
+            return 24
+        case .top, .middle:
+            return 12
+        }
     }
 }
 
