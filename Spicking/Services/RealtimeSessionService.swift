@@ -161,6 +161,29 @@ final class RealtimeSessionService {
         }
     }
 
+    func requestConversationReviewJSON(transcript: String) async throws -> String {
+        textResponseBuffer = ""
+
+        return try await withCheckedThrowingContinuation { continuation in
+            awaitingTextResponseContinuation = continuation
+
+            Task {
+                do {
+                    try await send([
+                        "type": "response.create",
+                        "response": [
+                            "output_modalities": ["text"],
+                            "instructions": PromptLibrary.conversationReviewInstructions(transcript: transcript),
+                        ],
+                    ])
+                } catch {
+                    awaitingTextResponseContinuation = nil
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     private func requestKickoff(topic: String) async throws {
         try await send([
             "type": "response.create",
@@ -377,4 +400,45 @@ enum PromptLibrary {
     - "intentKo" must be a natural Korean interpretation of what the user meant, written like a smooth translation rather than a label.
     - "reasonKo" must be in Korean and explain concretely why the new sentence sounds smoother, clearer, or more natural in conversation.
     """
+
+    static func conversationReviewInstructions(transcript: String) -> String {
+        """
+        You are preparing a polished conversation replay for an English speaking app.
+        Analyze the transcript below and return JSON only, with no markdown and no extra commentary.
+
+        Transcript:
+        \(transcript)
+
+        Return one item for every user turn in the transcript.
+        Use this exact schema:
+        {
+          "items": [
+            {
+              "sourceSequence": 1,
+              "originalText": "string",
+              "naturalRewrite": "string",
+              "reasonKo": "string",
+              "intentKo": "string",
+              "recommendedPhrases": [
+                {
+                  "expressionEn": "string",
+                  "usageNoteKo": "string"
+                }
+              ]
+            }
+          ]
+        }
+
+        Rules:
+        - Include every user turn exactly once.
+        - Preserve sourceSequence exactly as provided in the transcript.
+        - "naturalRewrite" should be a natural spoken English version of the user's sentence.
+        - Even if the user's sentence is already decent, lightly polish it so the replay reads smoothly.
+        - "intentKo" should be a natural Korean translation of what the user meant.
+        - "reasonKo" should explain in Korean why this rewrite sounds smoother or more natural.
+        - "recommendedPhrases" should contain 1 or 2 short useful spoken English expressions related to this specific turn.
+        - Each recommended phrase must be different from the main naturalRewrite.
+        - Each usageNoteKo should be short, practical, and in Korean.
+        """
+    }
 }

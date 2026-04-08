@@ -24,10 +24,11 @@ struct LiveConversationView: View {
             transcriptArea
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .padding(.horizontal, 10)
+                .padding(.bottom, 10)
                 .overlay(alignment: .bottom) {
                     bottomControls
                         .padding(.horizontal, 18)
-                        .padding(.bottom, 18)
+                        .padding(.bottom, 10)
                 }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -181,7 +182,7 @@ struct LiveConversationView: View {
 
     private var modeControls: some View {
         HStack(spacing: 4) {
-            modeSegment(title: "자동 인식", mode: .automatic)
+            modeSegment(title: "자동 보내기", mode: .automatic)
             modeSegment(title: "직접 보내기", mode: .manual)
         }
         .padding(4)
@@ -197,6 +198,13 @@ struct LiveConversationView: View {
     }
 
     private var sendButton: some View {
+        sendButtonBody(
+            isVisible: viewModel.inputMode == .manual,
+            isEnabled: viewModel.canSendCurrentTurnManually
+        )
+    }
+
+    private func sendButtonBody(isVisible: Bool, isEnabled: Bool) -> some View {
         Button {
             Task {
                 await viewModel.sendCurrentTurnManually()
@@ -223,9 +231,12 @@ struct LiveConversationView: View {
                 .shadow(color: SpickingPalette.ocean.opacity(0.24), radius: 18, y: 10)
         )
         .buttonStyle(.plain)
-        .disabled(!viewModel.canSendCurrentTurnManually)
-        .opacity(viewModel.inputMode == .manual ? (viewModel.canSendCurrentTurnManually ? 1 : 0.55) : 0)
-        .allowsHitTesting(viewModel.inputMode == .manual && viewModel.canSendCurrentTurnManually)
+        .disabled(!isEnabled)
+        .opacity(isVisible ? (isEnabled ? 1 : 0.55) : 0)
+        .scaleEffect(isVisible ? (isEnabled ? 1 : 0.88) : 0.82)
+        .allowsHitTesting(isVisible && isEnabled)
+        .animation(.spring(response: 0.28, dampingFraction: 0.78), value: isEnabled)
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isVisible)
     }
 
     private func modeSegment(title: String, mode: ConversationInputMode) -> some View {

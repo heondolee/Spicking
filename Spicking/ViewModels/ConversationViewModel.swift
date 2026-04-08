@@ -61,6 +61,10 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private var suppressNewUserTurnsUntil: CFTimeInterval = 0
     private var awaitingAssistantReplyStart = false
 
+    var completedSession: ConversationSession? {
+        sessionRecord
+    }
+
     private func logTurnGate(_ message: String) {
 #if DEBUG
         print("[TurnGate] \(message)")
@@ -125,7 +129,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         guard !isEndingSession else { return }
         isEndingSession = true
         phase = .generatingReview
-        statusMessage = "세션 리뷰를 생성하고 있어요…"
+        statusMessage = "대화를 정리하고 있어요…"
 
         audioEngineService?.stop()
         assistantSpeaking = false
@@ -143,7 +147,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             try modelContext.save()
 
             if liveTranscriptLines.filter({ $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }).count <= 1 {
-                statusMessage = "이번 세션은 대화가 짧아서 리뷰를 만들기 어려웠어요. 다음에는 조금 더 길게 말해보세요."
+                statusMessage = "이번 대화는 짧아서 수정할 문장이 많지 않았어요."
                 reviewCards = []
                 sessionRecord.status = .completed
                 try modelContext.save()
@@ -153,14 +157,14 @@ final class ConversationViewModel: ObservableObject, Identifiable {
                 return
             }
 
-            let rawReview = try await requestReviewWithRetry()
-            let suggestions = try reviewService.parseSuggestions(from: rawReview)
-            reviewCards = try persistReviewSuggestions(suggestions, sessionID: sessionRecord.id)
+            let rawReview = try await requestConversationReviewWithRetry()
+            let suggestions = try reviewService.parseBubbleReviews(from: rawReview)
+            reviewCards = try persistBubbleReviews(suggestions, sessionID: sessionRecord.id)
 
             sessionRecord.status = .completed
             try modelContext.save()
             phase = .review
-            statusMessage = "리뷰가 준비됐어요."
+            statusMessage = "대화 다시보기가 준비됐어요."
             realtimeSessionService?.disconnect()
         } catch {
             fail(with: error.localizedDescription)
@@ -853,6 +857,29 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         }
     }
 
+    private func requestConversationReviewWithRetry() async throws -> String {
+        guard let realtimeSessionService else {
+            throw NSError(domain: "ConversationViewModel", code: 0, userInfo: [NSLocalizedDescriptionKey: "실시간 세션 정보가 없어요."])
+        }
+
+        let transcript = makeConversationReviewTranscript()
+        do {
+            return try await realtimeSessionService.requestConversationReviewJSON(transcript: transcript)
+        } catch {
+            return try await realtimeSessionService.requestConversationReviewJSON(transcript: transcript)
+        }
+    }
+
+    private func makeConversationReviewTranscript() -> String {
+        transcriptEntriesByRemoteID.values
+            .sorted { $0.sequence < $1.sequence }
+            .filter { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            .map { entry in
+                "[\(entry.sequence)] [\(entry.role.rawValue)] \(entry.text.trimmingCharacters(in: .whitespacesAndNewlines))"
+            }
+            .joined(separator: "\n")
+    }
+
     private func persistReviewSuggestions(_ suggestions: [ReviewService.Suggestion], sessionID: UUID) throws -> [ReviewCard] {
         let existing = try modelContext.fetch(FetchDescriptor<ReviewSuggestion>(predicate: #Predicate { $0.sessionID == sessionID }))
         for item in existing {
@@ -880,6 +907,52 @@ final class ConversationViewModel: ObservableObject, Identifiable {
                 id: $0.id,
                 originalText: $0.originalText,
                 minimalRewrite: $0.minimalRewrite,
+                naturalRewrite: $0.naturalRewrite,
+                reasonKo: $0.reasonKo,
+                intentKo: $0.intentKo,
+                isSaved: $0.isSaved
+            )
+        }
+    }
+
+    private func persistBubbleReviews(_ suggestions: [ReviewService.BubbleReview], sessionID: UUID) throws -> [ReviewCard] {
+        let existing = try modelContext.fetch(FetchDescriptor<ReviewSuggestion>(predicate: #Predicate { $0.sessionID == sessionID }))
+        for item in existing {
+            modelContext.delete(item)
+        }
+
+        let userEntriesBySequence = Dictionary(
+            uniqueKeysWithValues: transcriptEntriesByRemoteID.values
+                .filter { $0.role == .user }
+                .map { ($0.sequence, $0) }
+        )
+
+        let models = suggestions.compactMap { suggestion -> ReviewSuggestion? in
+            guard let sourceEntry = userEntriesBySequence[suggestion.sourceSequence] else { return nil }
+            return ReviewSuggestion(
+                sessionID: sessionID,
+                sourceSequence: suggestion.sourceSequence,
+                sourceRemoteItemID: sourceEntry.remoteItemID,
+                originalText: suggestion.originalText,
+                minimalRewrite: suggestion.naturalRewrite,
+                naturalRewrite: suggestion.naturalRewrite,
+                reasonKo: suggestion.reasonKo,
+                intentKo: suggestion.intentKo,
+                tags: [],
+                recommendedPhrases: suggestion.recommendedPhrases
+            )
+        }
+
+        for item in models {
+            modelContext.insert(item)
+        }
+        try modelContext.save()
+
+        return models.map {
+            ReviewCard(
+                id: $0.id,
+                originalText: $0.originalText,
+                minimalRewrite: $0.naturalRewrite,
                 naturalRewrite: $0.naturalRewrite,
                 reasonKo: $0.reasonKo,
                 intentKo: $0.intentKo,

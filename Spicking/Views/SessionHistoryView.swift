@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftData
 import SwiftUI
 
@@ -7,11 +8,20 @@ struct SessionHistoryView: View {
         static let bottomRadius: CGFloat = 50
     }
 
-    let session: ConversationSession
-    @Query private var entries: [TranscriptEntry]
+    @Environment(\.modelContext) private var modelContext
 
-    init(session: ConversationSession) {
+    let session: ConversationSession
+    let onDone: (() -> Void)?
+
+    @Query private var entries: [TranscriptEntry]
+    @Query private var suggestions: [ReviewSuggestion]
+    @Query private var phraseCards: [PhraseCard]
+
+    @State private var speechPlayer = BubbleSpeechPlayer()
+
+    init(session: ConversationSession, onDone: (() -> Void)? = nil) {
         self.session = session
+        self.onDone = onDone
         let sessionID = session.id
         _entries = Query(
             filter: #Predicate<TranscriptEntry> { entry in
@@ -19,18 +29,18 @@ struct SessionHistoryView: View {
             },
             sort: [SortDescriptor(\TranscriptEntry.sequence, order: .forward)]
         )
-    }
-
-    private var historyLines: [LiveTranscriptLine] {
-        entries.map {
-            LiveTranscriptLine(
-                id: $0.remoteItemID.isEmpty ? $0.id.uuidString : $0.remoteItemID,
-                role: $0.role,
-                text: $0.text,
-                isFinal: $0.isFinal,
-                wasInterrupted: $0.wasInterrupted
-            )
-        }
+        _suggestions = Query(
+            filter: #Predicate<ReviewSuggestion> { suggestion in
+                suggestion.sessionID == sessionID
+            },
+            sort: [SortDescriptor(\ReviewSuggestion.sourceSequence, order: .forward)]
+        )
+        _phraseCards = Query(
+            filter: #Predicate<PhraseCard> { card in
+                card.sourceSessionID == sessionID
+            },
+            sort: [SortDescriptor(\PhraseCard.createdAt, order: .reverse)]
+        )
     }
 
     var body: some View {
@@ -65,6 +75,13 @@ struct SessionHistoryView: View {
         }
         .navigationTitle("대화 다시 보기")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let onDone {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("완료", action: onDone)
+                }
+            }
+        }
     }
 
     private var historyTranscriptArea: some View {
@@ -95,17 +112,26 @@ struct SessionHistoryView: View {
 
             ScrollView {
                 LazyVStack(spacing: 14) {
-                    if historyLines.isEmpty {
+                    if entries.isEmpty {
                         Text("복기할 대화 내용이 아직 없어요.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        ForEach(historyLines) { line in
-                            HistoryTranscriptBubble(line: line)
+                        ForEach(entries) { entry in
+                            HistoryTranscriptBubble(
+                                entry: entry,
+                                suggestion: suggestion(for: entry),
+                                savedExpressions: savedExpressions,
+                                onSpeak: { text in
+                                    speechPlayer.speak(text: text)
+                                },
+                                onSavePhrase: { suggestion, phrase in
+                                    savePhrase(from: suggestion, phrase: phrase)
+                                }
+                            )
                         }
                     }
-
                 }
                 .frame(maxWidth: .infinity, alignment: .top)
                 .padding(.horizontal, 18)
@@ -126,39 +152,104 @@ struct SessionHistoryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
+
+    private var savedExpressions: Set<String> {
+        Set(phraseCards.map(\.expressionEn))
+    }
+
+    private func suggestion(for entry: TranscriptEntry) -> ReviewSuggestion? {
+        suggestions.first {
+            $0.sourceRemoteItemID == entry.remoteItemID
+                || ($0.sourceSequence == entry.sequence && $0.originalText == entry.text)
+        }
+    }
+
+    private func savePhrase(from suggestion: ReviewSuggestion, phrase: RecommendedPhrase) {
+        guard !savedExpressions.contains(phrase.expressionEn) else { return }
+
+        let card = PhraseCard(
+            intentKo: suggestion.intentKo,
+            expressionEn: phrase.expressionEn,
+            sourceOriginalText: suggestion.originalText,
+            naturalRewrite: suggestion.naturalRewrite,
+            usageNoteKo: phrase.usageNoteKo,
+            tags: [],
+            sourceSessionID: session.id
+        )
+        modelContext.insert(card)
+        try? modelContext.save()
+    }
 }
 
 private struct HistoryTranscriptBubble: View {
-    let line: LiveTranscriptLine
+    let entry: TranscriptEntry
+    let suggestion: ReviewSuggestion?
+    let savedExpressions: Set<String>
+    let onSpeak: (String) -> Void
+    let onSavePhrase: (ReviewSuggestion, RecommendedPhrase) -> Void
 
     private var bubbleTextMaxWidth: CGFloat {
         320
     }
 
     private var isAssistant: Bool {
-        line.role == .assistant
+        entry.role == .assistant
+    }
+
+    private var displayedText: String {
+        if isAssistant {
+            return entry.text
+        }
+        return suggestion?.naturalRewrite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? suggestion?.naturalRewrite ?? entry.text
+            : entry.text
     }
 
     var body: some View {
         HStack {
             if isAssistant {
-                bubble
+                bubbleColumn
                 Spacer(minLength: 46)
             } else {
                 Spacer(minLength: 46)
-                bubble
+                bubbleColumn
             }
         }
         .frame(maxWidth: .infinity)
     }
 
-    private var bubble: some View {
-        Group {
-            if isAssistant {
-                HistoryAssistantSentenceBubbleSequence(line: line, bubbleTextMaxWidth: bubbleTextMaxWidth)
-            } else {
-                transcriptBubbleBody(text: line.text)
+    private var bubbleColumn: some View {
+        VStack(alignment: isAssistant ? .leading : .trailing, spacing: 8) {
+            bubble
+
+            if !isAssistant, let suggestion, displayedText != entry.text {
+                Text("원문 · \(entry.text)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .trailing)
             }
+
+            if !isAssistant, let suggestion, !suggestion.recommendedPhrases.isEmpty {
+                recommendedPhraseList(for: suggestion)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var bubble: some View {
+        if isAssistant {
+            HistoryAssistantSentenceBubbleSequence(
+                text: displayedText,
+                bubbleTextMaxWidth: bubbleTextMaxWidth,
+                onSpeak: onSpeak
+            )
+        } else {
+            Button {
+                onSpeak(displayedText)
+            } label: {
+                transcriptBubbleBody(text: displayedText)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -172,7 +263,7 @@ private struct HistoryTranscriptBubble: View {
         .padding(.vertical, 12)
         .background(background)
         .overlay(alignment: .bottomTrailing) {
-            if line.wasInterrupted && !isAssistant {
+            if entry.wasInterrupted && !isAssistant {
                 Text("중간 종료")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -227,23 +318,68 @@ private struct HistoryTranscriptBubble: View {
             .shadow(color: .black.opacity(0.03), radius: 10, y: 6)
         }
     }
+
+    private func recommendedPhraseList(for suggestion: ReviewSuggestion) -> some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            ForEach(suggestion.recommendedPhrases, id: \.expressionEn) { phrase in
+                HStack(spacing: 10) {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(phrase.expressionEn)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(SpickingPalette.ink)
+                            .multilineTextAlignment(.trailing)
+                        Text(phrase.usageNoteKo)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    Button {
+                        onSavePhrase(suggestion, phrase)
+                    } label: {
+                        Image(systemName: savedExpressions.contains(phrase.expressionEn) ? "checkmark.circle.fill" : "plus.circle.fill")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(savedExpressions.contains(phrase.expressionEn) ? SpickingPalette.ocean : SpickingPalette.teal)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.white.opacity(0.82))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(SpickingPalette.outline.opacity(0.72), lineWidth: 1)
+                        )
+                )
+                .frame(maxWidth: bubbleTextMaxWidth + 52, alignment: .trailing)
+            }
+        }
+    }
 }
 
 private struct HistoryAssistantSentenceBubbleSequence: View {
-    let line: LiveTranscriptLine
+    let text: String
     let bubbleTextMaxWidth: CGFloat
+    let onSpeak: (String) -> Void
 
     private var renderedSegments: [String] {
-        sentenceSegments(from: line.text)
+        sentenceSegments(from: text)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(renderedSegments.enumerated()), id: \.offset) { index, sentence in
-                assistantBubble(
-                    text: sentence,
-                    position: bubblePosition(for: index, totalCount: renderedSegments.count)
-                )
+                Button {
+                    onSpeak(sentence)
+                } label: {
+                    assistantBubble(
+                        text: sentence,
+                        position: bubblePosition(for: index, totalCount: renderedSegments.count)
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .leading)
@@ -357,3 +493,27 @@ private struct HistoryBubbleTextBlock: View {
         }
     }
 }
+
+@MainActor
+private final class BubbleSpeechPlayer: NSObject {
+    private let synthesizer = AVSpeechSynthesizer()
+
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
+
+    func speak(text: String) {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+
+        synthesizer.stopSpeaking(at: .immediate)
+        let utterance = AVSpeechUtterance(string: cleaned)
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.rate = 0.48
+        utterance.pitchMultiplier = 1.0
+        synthesizer.speak(utterance)
+    }
+}
+
+extension BubbleSpeechPlayer: AVSpeechSynthesizerDelegate {}

@@ -11,11 +11,15 @@ struct ConversationFlowView: View {
                 case .preparing, .live:
                     LiveConversationView(viewModel: viewModel, onClose: onClose)
                 case .generatingReview:
-                    ProgressView("리뷰를 만드는 중이에요…")
+                    ProgressView("대화를 정리하고 있어요…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(SpickingBackground())
                 case .review:
-                    SessionReviewView(viewModel: viewModel, onDone: onClose)
+                    if let session = viewModel.completedSession {
+                        SessionHistoryView(session: session, onDone: onClose)
+                    } else {
+                        FailureStateView(message: "대화 정보를 불러오지 못했어요.", onClose: onClose)
+                    }
                 case .failed(let message):
                     FailureStateView(message: message, onClose: onClose)
                 }

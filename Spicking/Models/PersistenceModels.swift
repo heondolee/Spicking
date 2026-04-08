@@ -1,6 +1,11 @@
 import Foundation
 import SwiftData
 
+struct RecommendedPhrase: Codable, Hashable {
+    var expressionEn: String
+    var usageNoteKo: String
+}
+
 enum ConversationSessionStatus: String, Codable, CaseIterable {
     case preparing
     case live
@@ -92,33 +97,42 @@ final class TranscriptEntry {
 final class ReviewSuggestion {
     @Attribute(.unique) var id: UUID
     var sessionID: UUID
+    var sourceSequence: Int
+    var sourceRemoteItemID: String
     var originalText: String
     var minimalRewrite: String
     var naturalRewrite: String
     var reasonKo: String
     var intentKo: String
     var tagsRaw: String
+    var recommendedPhrasesRaw: String
     var isSaved: Bool
 
     init(
         id: UUID = UUID(),
         sessionID: UUID,
+        sourceSequence: Int = 0,
+        sourceRemoteItemID: String = "",
         originalText: String,
         minimalRewrite: String,
         naturalRewrite: String,
         reasonKo: String,
         intentKo: String,
         tags: [String],
+        recommendedPhrases: [RecommendedPhrase] = [],
         isSaved: Bool = false
     ) {
         self.id = id
         self.sessionID = sessionID
+        self.sourceSequence = sourceSequence
+        self.sourceRemoteItemID = sourceRemoteItemID
         self.originalText = originalText
         self.minimalRewrite = minimalRewrite
         self.naturalRewrite = naturalRewrite
         self.reasonKo = reasonKo
         self.intentKo = intentKo
         self.tagsRaw = tags.joined(separator: ",")
+        self.recommendedPhrasesRaw = ReviewSuggestion.encodeRecommendedPhrases(recommendedPhrases)
         self.isSaved = isSaved
     }
 
@@ -132,6 +146,31 @@ final class ReviewSuggestion {
         set {
             tagsRaw = newValue.joined(separator: ",")
         }
+    }
+
+    var recommendedPhrases: [RecommendedPhrase] {
+        get {
+            ReviewSuggestion.decodeRecommendedPhrases(recommendedPhrasesRaw)
+        }
+        set {
+            recommendedPhrasesRaw = ReviewSuggestion.encodeRecommendedPhrases(newValue)
+        }
+    }
+
+    private static func encodeRecommendedPhrases(_ phrases: [RecommendedPhrase]) -> String {
+        guard let data = try? JSONEncoder().encode(phrases),
+              let string = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return string
+    }
+
+    private static func decodeRecommendedPhrases(_ raw: String) -> [RecommendedPhrase] {
+        guard let data = raw.data(using: .utf8),
+              let phrases = try? JSONDecoder().decode([RecommendedPhrase].self, from: data) else {
+            return []
+        }
+        return phrases
     }
 }
 

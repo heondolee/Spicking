@@ -1,6 +1,19 @@
 import Foundation
 
 struct ReviewService {
+    struct BubbleReviewEnvelope: Decodable {
+        let items: [BubbleReview]
+    }
+
+    struct BubbleReview: Decodable {
+        let sourceSequence: Int
+        let originalText: String
+        let naturalRewrite: String
+        let reasonKo: String
+        let intentKo: String
+        let recommendedPhrases: [RecommendedPhrase]
+    }
+
     struct SuggestionEnvelope: Decodable {
         let suggestions: [Suggestion]
     }
@@ -18,6 +31,13 @@ struct ReviewService {
         let data = Data(jsonPayload.utf8)
         let envelope = try JSONDecoder().decode(SuggestionEnvelope.self, from: data)
         return envelope.suggestions.compactMap(normalize)
+    }
+
+    func parseBubbleReviews(from rawText: String) throws -> [BubbleReview] {
+        let jsonPayload = extractJSONObject(from: rawText)
+        let data = Data(jsonPayload.utf8)
+        let envelope = try JSONDecoder().decode(BubbleReviewEnvelope.self, from: data)
+        return envelope.items.compactMap(normalize)
     }
 
     private func extractJSONObject(from text: String) -> String {
@@ -51,6 +71,30 @@ struct ReviewService {
             naturalRewrite: naturalRewrite,
             reasonKo: reasonKo,
             intentKo: intentKo
+        )
+    }
+
+    private func normalize(_ review: BubbleReview) -> BubbleReview? {
+        let originalText = review.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let naturalRewrite = review.naturalRewrite.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reasonKo = review.reasonKo.trimmingCharacters(in: .whitespacesAndNewlines)
+        let intentKo = review.intentKo.trimmingCharacters(in: .whitespacesAndNewlines)
+        let recommendedPhrases = review.recommendedPhrases.compactMap { phrase -> RecommendedPhrase? in
+            let expression = phrase.expressionEn.trimmingCharacters(in: .whitespacesAndNewlines)
+            let usage = phrase.usageNoteKo.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !expression.isEmpty, !usage.isEmpty else { return nil }
+            return RecommendedPhrase(expressionEn: expression, usageNoteKo: usage)
+        }
+
+        guard review.sourceSequence > 0, !originalText.isEmpty else { return nil }
+
+        return BubbleReview(
+            sourceSequence: review.sourceSequence,
+            originalText: originalText,
+            naturalRewrite: naturalRewrite.isEmpty ? originalText : naturalRewrite,
+            reasonKo: reasonKo,
+            intentKo: intentKo,
+            recommendedPhrases: Array(recommendedPhrases.prefix(2))
         )
     }
 
