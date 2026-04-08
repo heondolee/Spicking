@@ -138,8 +138,17 @@ struct LiveConversationView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .scrollIndicators(.hidden)
                 .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
-                .onReceive(viewModel.$liveTranscriptLines.map(\.last?.id).removeDuplicates()) { lastID in
-                    guard let lastID else { return }
+                .onReceive(
+                    viewModel.$liveTranscriptLines
+                        .map { lines -> String in
+                            guard let last = lines.last else { return "" }
+                            return "\(last.id)|\(last.text)|\(last.isFinal)"
+                        }
+                        .removeDuplicates()
+                ) { signature in
+                    guard !signature.isEmpty else { return }
+                    let lastID = String(signature.split(separator: "|", maxSplits: 1).first ?? "")
+                    guard !lastID.isEmpty else { return }
                     pendingScrollTask?.cancel()
                     pendingScrollTask = Task {
                         try? await Task.sleep(nanoseconds: 30_000_000)
@@ -210,25 +219,35 @@ private struct TranscriptBubble: View {
     }
 
     private var bubble: some View {
+        Group {
+            if isAssistant {
+                AssistantSentenceBubbleSequence(line: line, bubbleTextMaxWidth: bubbleTextMaxWidth)
+            } else {
+                transcriptBubbleBody(text: line.text)
+            }
+        }
+    }
+
+    private func transcriptBubbleBody(text: String) -> some View {
         StreamingTranscriptLabel(
-            text: line.text,
+            text: text,
             tokenRevealDelay: isAssistant ? 55_000_000 : 35_000_000,
             textColor: UIColor(isAssistant ? .white : SpickingPalette.ink)
         )
-            .frame(maxWidth: bubbleTextMaxWidth, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(background)
-            .overlay(alignment: .bottomTrailing) {
-                if line.wasInterrupted && !isAssistant {
-                    Text("중간 종료")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.trailing, 10)
-                        .padding(.bottom, 8)
-                }
+        .frame(maxWidth: bubbleTextMaxWidth, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(background)
+        .overlay(alignment: .bottomTrailing) {
+            if line.wasInterrupted && !isAssistant {
+                Text("중간 종료")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 8)
             }
-            .transition(.asymmetric(insertion: .move(edge: isAssistant ? .leading : .trailing).combined(with: .opacity), removal: .opacity))
+        }
+        .transition(.asymmetric(insertion: .move(edge: isAssistant ? .leading : .trailing).combined(with: .opacity), removal: .opacity))
     }
 
     @ViewBuilder
@@ -251,6 +270,123 @@ private struct TranscriptBubble: View {
                 )
                 .shadow(color: .black.opacity(0.03), radius: 10, y: 6)
         }
+    }
+}
+
+private struct AssistantSentenceBubbleSequence: View {
+    let line: LiveTranscriptLine
+    let bubbleTextMaxWidth: CGFloat
+    @State private var visibleCount = 0
+    @State private var revealTask: Task<Void, Never>?
+
+    private var sentences: [String] {
+        splitSentences(from: line.text)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(sentences.prefix(visibleCount).enumerated()), id: \.offset) { _, sentence in
+                assistantBubble(text: sentence)
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .leading)
+        .onAppear {
+            syncVisibleCount(animated: false)
+        }
+        .onChange(of: line.text) { _, _ in
+            syncVisibleCount(animated: true)
+        }
+        .onDisappear {
+            revealTask?.cancel()
+        }
+    }
+
+    private func assistantBubble(text: String) -> some View {
+        StreamingTranscriptLabel(
+            text: text,
+            tokenRevealDelay: 55_000_000,
+            textColor: UIColor(.white)
+        )
+        .frame(maxWidth: bubbleTextMaxWidth, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [SpickingPalette.ocean, SpickingPalette.teal],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+
+    private func syncVisibleCount(animated: Bool) {
+        revealTask?.cancel()
+        let targetSentences = sentences
+        let targetCount = targetSentences.count
+
+        guard targetCount > 0 else {
+            visibleCount = 0
+            return
+        }
+
+        if visibleCount == 0 || animated == false {
+            visibleCount = 1
+        }
+
+        guard targetCount > visibleCount else {
+            return
+        }
+
+        revealTask = Task {
+            for nextCount in (visibleCount + 1)...targetCount {
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    withAnimation(.easeIn(duration: 0.24)) {
+                        visibleCount = nextCount
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 160_000_000)
+            }
+        }
+    }
+
+    private func splitSentences(from text: String) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let regex = try? NSRegularExpression(pattern: #"(?<=[.!?])\s+"#) else {
+            return trimmed.isEmpty ? [] : [trimmed]
+        }
+
+        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+        let matches = regex.matches(in: trimmed, range: range)
+        guard !matches.isEmpty else { return trimmed.isEmpty ? [] : [trimmed] }
+
+        var segments: [String] = []
+        var currentLocation = 0
+
+        for match in matches {
+            let segmentRange = NSRange(location: currentLocation, length: match.range.location - currentLocation)
+            if let range = Range(segmentRange, in: trimmed) {
+                let sentence = String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !sentence.isEmpty {
+                    segments.append(sentence)
+                }
+            }
+            currentLocation = match.range.location + match.range.length
+        }
+
+        let tailRange = NSRange(location: currentLocation, length: range.length - currentLocation)
+        if let range = Range(tailRange, in: trimmed) {
+            let sentence = String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sentence.isEmpty {
+                segments.append(sentence)
+            }
+        }
+
+        return segments.isEmpty ? [trimmed] : segments
     }
 }
 
