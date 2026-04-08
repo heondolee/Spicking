@@ -27,7 +27,7 @@ final class AudioEngineService {
     private let speechThreshold: Float = 0.010
     private let assistantPlaybackSpeechThreshold: Float = 0.060
     private let speechDetectionCooldown: CFTimeInterval = 0.35
-    private let speechRecognitionSilenceTimeout: CFTimeInterval = 1.25
+    private let speechRecognitionSilenceTimeout: CFTimeInterval = 1.7
     private let assistantPlaybackGracePeriod: CFTimeInterval = 0.18
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var speechRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?

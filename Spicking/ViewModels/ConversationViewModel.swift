@@ -413,7 +413,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
 
         pendingAssistantResponseTask?.cancel()
         pendingAssistantResponseTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_250_000_000)
+            try? await Task.sleep(nanoseconds: 1_700_000_000)
             guard let self, Task.isCancelled == false else { return }
             guard self.assistantSpeaking == false else { return }
             guard self.activeUserRemoteItemID == nil else { return }

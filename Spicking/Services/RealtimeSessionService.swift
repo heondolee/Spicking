@@ -77,7 +77,7 @@ final class RealtimeSessionService {
                             "type": "server_vad",
                             "threshold": 0.72,
                             "prefix_padding_ms": 250,
-                            "silence_duration_ms": 1_250,
+                            "silence_duration_ms": 1_700,
                             "interrupt_response": true,
                             "create_response": false,
                         ],
@@ -177,6 +177,8 @@ final class RealtimeSessionService {
                 "instructions": """
                 Continue the live English conversation naturally.
                 Speak in English only.
+                If the user used Korean or mixed Korean into the last message, understand it and answer in English only.
+                If the user seems to be asking what a Korean word or phrase means, explain it briefly in simple English and keep the conversation moving.
                 Respond to the user's latest message, keep it short, and ask exactly one follow-up question.
                 """,
             ],
@@ -307,7 +309,9 @@ enum PromptLibrary {
         You are a private English speaking coach inside an iPhone speaking app.
         Your job is to help the user speak more naturally and fluently in spoken English.
         Important language rule: always reply in English only.
-        Even if the user speaks Korean, asks in Korean, or requests Korean, still answer in English only.
+        Even if the user speaks Korean, asks in Korean, mixes Korean into a sentence, or asks what a Korean phrase means, still answer in English only.
+        You should understand Korean input and help the user with it, but your spoken reply must stay in natural English.
+        If the user uses a Korean word or phrase, you may briefly explain its meaning in simple English and then continue the conversation naturally.
         Never switch to Korean, never explain in Korean, and never give bilingual output during the live conversation.
         Stay on the selected topic: \(topic).
         Keep spoken replies short, warm, natural, and easy to answer.
@@ -321,6 +325,7 @@ enum PromptLibrary {
         """
         Start a friendly English conversation practice session about "\(topic)".
         Speak in English only.
+        If the user later uses Korean, understand it and respond in English only.
         Say hello briefly, mention the topic, and ask exactly one open-ended question to get the user talking.
         """
     }

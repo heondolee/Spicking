@@ -510,8 +510,6 @@ private struct StreamingTranscriptLabel: UIViewRepresentable {
 
         func update(text newValue: String, tokenRevealDelay: UInt64) {
             guard let label else { return }
-            let oldTokens = tokenize(displayedText)
-            let newTokens = tokenize(newValue)
 
             if hasAnimatedIn == false {
                 hasAnimatedIn = true
@@ -523,24 +521,42 @@ private struct StreamingTranscriptLabel: UIViewRepresentable {
 
             revealTask?.cancel()
 
-            guard newTokens.count > oldTokens.count,
-                  Array(newTokens.prefix(oldTokens.count)) == oldTokens else {
+            if newValue == displayedText {
+                return
+            }
+
+            let sharedPrefix = commonPrefix(between: displayedText, and: newValue)
+            if sharedPrefix.count < displayedText.count {
+                displayedText = sharedPrefix
+                label.text = sharedPrefix
+            }
+
+            let suffix = String(newValue.dropFirst(sharedPrefix.count))
+            guard suffix.isEmpty == false else {
                 displayedText = newValue
                 label.text = newValue
                 return
             }
 
-            let additionalTokens = Array(newTokens.dropFirst(oldTokens.count))
+            let additionalUnits = tokenizeKeepingTrailingWhitespace(suffix)
+            guard additionalUnits.isEmpty == false else {
+                displayedText = newValue
+                label.text = newValue
+                return
+            }
 
             revealTask = Task { [weak self] in
                 guard let self else { return }
-                for token in additionalTokens {
+                for unit in additionalUnits {
                     if Task.isCancelled { return }
-                    try? await Task.sleep(nanoseconds: tokenRevealDelay)
                     await MainActor.run {
-                        self.displayedText += token
+                        self.displayedText += unit
                         self.label?.text = self.displayedText
                     }
+                    guard unit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                        continue
+                    }
+                    try? await Task.sleep(nanoseconds: tokenRevealDelay)
                 }
             }
         }
@@ -549,9 +565,9 @@ private struct StreamingTranscriptLabel: UIViewRepresentable {
             revealTask?.cancel()
         }
 
-        private func tokenize(_ text: String) -> [String] {
+        private func tokenizeKeepingTrailingWhitespace(_ text: String) -> [String] {
             let nsText = text as NSString
-            let pattern = #"\S+\s*"#
+            let pattern = #"\S+\s*|\s+"#
             guard let regex = try? NSRegularExpression(pattern: pattern) else {
                 return text.isEmpty ? [] : [text]
             }
@@ -559,6 +575,20 @@ private struct StreamingTranscriptLabel: UIViewRepresentable {
             return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap {
                 Range($0.range, in: text).map { String(text[$0]) }
             }
+        }
+
+        private func commonPrefix(between lhs: String, and rhs: String) -> String {
+            var prefix = ""
+            var leftIndex = lhs.startIndex
+            var rightIndex = rhs.startIndex
+
+            while leftIndex < lhs.endIndex, rightIndex < rhs.endIndex, lhs[leftIndex] == rhs[rightIndex] {
+                prefix.append(lhs[leftIndex])
+                leftIndex = lhs.index(after: leftIndex)
+                rightIndex = rhs.index(after: rightIndex)
+            }
+
+            return prefix
         }
     }
 }
