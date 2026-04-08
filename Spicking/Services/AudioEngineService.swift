@@ -25,13 +25,17 @@ final class AudioEngineService {
     private var pendingAssistantBuffers = 0
     private var currentAssistantStreamEnded = false
     private let speechThreshold: Float = 0.010
+    private let assistantPlaybackSpeechThreshold: Float = 0.030
     private let speechDetectionCooldown: CFTimeInterval = 0.35
-    private let speechRecognitionSilenceTimeout: CFTimeInterval = 0.9
+    private let speechRecognitionSilenceTimeout: CFTimeInterval = 1.25
+    private let assistantPlaybackGracePeriod: CFTimeInterval = 0.18
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var speechRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var speechRecognitionTask: SFSpeechRecognitionTask?
     private var speechRecognitionAuthorized = false
     private var lastRecognitionResult = ""
+    private var consecutiveAssistantSpeechDetections = 0
+    private var lastAssistantPlaybackEndedAt: CFTimeInterval = 0
     private var assistantPlaybackActive = false {
         didSet {
             if assistantPlaybackActive != oldValue {
@@ -90,7 +94,7 @@ final class AudioEngineService {
             currentAssistantStreamEnded = false
         }
 
-        stopSpeechRecognition(markFinal: true)
+        stopSpeechRecognition(markFinal: false)
 
         let durationMilliseconds = Double(frameCount) / playbackFormat.sampleRate * 1_000
         scheduledPlaybackMilliseconds += durationMilliseconds
@@ -129,6 +133,7 @@ final class AudioEngineService {
         pendingAssistantBuffers = 0
         currentAssistantStreamEnded = false
         assistantPlaybackActive = false
+        lastAssistantPlaybackEndedAt = CACurrentMediaTime()
 
         return RealtimePlaybackSnapshot(itemID: itemID, playedMilliseconds: playedMilliseconds)
     }
@@ -148,6 +153,7 @@ final class AudioEngineService {
         scheduledPlaybackMilliseconds = 0
         currentAssistantStreamEnded = false
         assistantPlaybackActive = false
+        lastAssistantPlaybackEndedAt = CACurrentMediaTime()
         if let finishedItemID {
             onAssistantPlaybackFinished?(finishedItemID)
         }
@@ -224,7 +230,25 @@ final class AudioEngineService {
 
         let rms = sqrtf(sum / Float(frameCount))
         let now = CACurrentMediaTime()
-        if rms > speechThreshold, now - lastSpeechDetectedAt > speechDetectionCooldown {
+        if assistantPlaybackActive {
+            if now - lastAssistantPlaybackEndedAt < assistantPlaybackGracePeriod {
+                return
+            }
+
+            if rms > assistantPlaybackSpeechThreshold {
+                consecutiveAssistantSpeechDetections += 1
+            } else {
+                consecutiveAssistantSpeechDetections = 0
+            }
+
+            guard consecutiveAssistantSpeechDetections >= 2 else { return }
+            consecutiveAssistantSpeechDetections = 0
+        } else {
+            consecutiveAssistantSpeechDetections = 0
+            guard rms > speechThreshold else { return }
+        }
+
+        if now - lastSpeechDetectedAt > speechDetectionCooldown {
             lastSpeechDetectedAt = now
             startSpeechRecognitionIfNeeded()
             Task { @MainActor [weak self] in
@@ -279,7 +303,7 @@ final class AudioEngineService {
         guard speechRecognitionRequest != nil else { return }
         let now = CACurrentMediaTime()
         guard now - lastSpeechDetectedAt > speechRecognitionSilenceTimeout else { return }
-        stopSpeechRecognition(markFinal: true)
+        stopSpeechRecognition(markFinal: false)
     }
 
     private func stopSpeechRecognition(markFinal: Bool) {

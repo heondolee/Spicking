@@ -11,6 +11,7 @@ struct LiveConversationView: View {
     var body: some View {
         ZStack {
             SpickingBackground()
+                .ignoresSafeArea()
 
             transcriptArea
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -21,6 +22,8 @@ struct LiveConversationView: View {
                 }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+				.padding(.bottom, 20)
+        .ignoresSafeArea(.container, edges: .bottom)
         .navigationBarBackButtonHidden()
         .navigationBarTitleDisplayMode(.inline)
         .alert("대화를 취소할까요?", isPresented: $showCancelAlert) {
@@ -106,10 +109,10 @@ struct LiveConversationView: View {
 
     private var transcriptArea: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
+            RoundedRectangle(cornerRadius: 40, style: .continuous)
                 .fill(Color.white.opacity(0.60))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    RoundedRectangle(cornerRadius: 40, style: .continuous)
                         .stroke(.white.opacity(0.86), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.05), radius: 22, y: 12)
@@ -130,8 +133,7 @@ struct LiveConversationView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .top)
                     .padding(.horizontal, 18)
-                    .padding(.top, 6)
-                    .padding(.bottom, 18)
+                    .padding(.vertical, 18)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .scrollIndicators(.hidden)

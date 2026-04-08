@@ -45,18 +45,8 @@ struct SessionReviewView: View {
 
     private var savedCountBadge: some View {
         Text("저장 \(viewModel.reviewCards.filter(\.isSaved).count)개")
-            .font(.caption.weight(.semibold))
             .foregroundStyle(SpickingPalette.ocean)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(SpickingPalette.ocean.opacity(0.10))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(SpickingPalette.ocean.opacity(0.18), lineWidth: 1)
-                    )
-            )
+						.padding(.leading, 12)
     }
 }
 
@@ -67,7 +57,7 @@ private struct ReviewCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             section(title: "내 문장", body: card.originalText)
-            section(title: "자연스러운 표현", body: card.naturalRewrite)
+            section(title: "자연스러운 표현", body: card.naturalRewrite, bodyFont: .body.weight(.bold))
             section(title: "해석", body: card.intentKo)
             section(title: "왜 이 표현이 더 자연스러운지", body: card.reasonKo)
 
@@ -85,13 +75,13 @@ private struct ReviewCardView: View {
         .glassCard(tint: Color.white.opacity(0.82))
     }
 
-    private func section(title: String, body: String) -> some View {
+    private func section(title: String, body: String, bodyFont: Font = .body) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             Text(body)
-                .font(.body)
+                .font(bodyFont)
         }
     }
 }

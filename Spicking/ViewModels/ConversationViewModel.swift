@@ -2,6 +2,11 @@ import Combine
 import Foundation
 import SwiftData
 
+private enum UserTranscriptSource {
+    case local
+    case remote
+}
+
 @MainActor
 final class ConversationViewModel: ObservableObject, Identifiable {
     let id = UUID()
@@ -27,6 +32,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private var nextSequence = 0
     private var hasStarted = false
     private var activeUserRemoteItemID: String?
+    private var activeUserTranscriptSource: UserTranscriptSource?
     private var initialCoachPlaybackStarted = false
     private var liveTranscriptSyncTask: Task<Void, Never>?
 
@@ -186,8 +192,11 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             self?.upsertTranscript(remoteItemID: itemID, role: .assistant, text: text, isFinal: isFinal)
         }
         realtimeService.onUserTranscriptUpdated = { [weak self] itemID, text, isFinal in
-            guard isFinal else { return }
-            self?.upsertTranscript(remoteItemID: itemID, role: .user, text: text, isFinal: true)
+            if isFinal {
+                self?.finalizeUserTranscript(remoteItemID: itemID, text: text)
+            } else {
+                self?.handleRemoteUserTranscriptDelta(remoteItemID: itemID, text: text)
+            }
         }
         realtimeService.onServerSpeechStarted = { [weak self] in
             Task { @MainActor [weak self] in
@@ -215,7 +224,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         await realtimeSessionService?.interruptActiveResponse(playbackSnapshot: playbackSnapshot)
     }
 
-    private func upsertTranscript(remoteItemID: String, role: TranscriptRole, text: String, isFinal: Bool) {
+    private func upsertTranscript(remoteItemID: String, role: TranscriptRole, text: String, isFinal: Bool, replaceStreamingText: Bool = false) {
         guard let sessionID = sessionRecord?.id else { return }
         let cleanedFinal = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let streamingText = text.trimmingCharacters(in: .newlines)
@@ -226,6 +235,8 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             entry = existing
             if isFinal {
                 entry.text = cleanedFinal
+            } else if replaceStreamingText {
+                entry.text = streamingText
             } else {
                 entry.text += streamingText
             }
@@ -236,6 +247,8 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             transcriptEntriesByRemoteID[remoteItemID] = entry
             if isFinal {
                 entry.text = cleanedFinal
+            } else if replaceStreamingText {
+                entry.text = streamingText
             } else {
                 entry.text += streamingText
             }
@@ -258,6 +271,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             entry.endedAt = .now
             if role == .user {
                 activeUserRemoteItemID = nil
+                activeUserTranscriptSource = nil
             }
         }
 
@@ -270,11 +284,22 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         scheduleLiveTranscriptSync()
     }
 
-    private func handleLiveUserTranscription(text: String, isFinal: Bool) {
+    private func handleLiveUserTranscription(text: String, isFinal _: Bool) {
         guard isPreparingInitialCoachTurn == false else { return }
+        guard activeUserTranscriptSource != .remote else { return }
         ensureUserTurnReserved()
         guard let activeUserRemoteItemID else { return }
-        upsertTranscript(remoteItemID: activeUserRemoteItemID, role: .user, text: text, isFinal: isFinal)
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        activeUserTranscriptSource = .local
+
+        upsertTranscript(
+            remoteItemID: activeUserRemoteItemID,
+            role: .user,
+            text: cleaned,
+            isFinal: false,
+            replaceStreamingText: true
+        )
     }
 
     private func ensureUserTurnReserved() {
@@ -293,8 +318,27 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         )
         transcriptEntriesByRemoteID[placeholderID] = entry
         activeUserRemoteItemID = placeholderID
+        activeUserTranscriptSource = nil
         modelContext.insert(entry)
         try? modelContext.save()
+    }
+
+    private func handleRemoteUserTranscriptDelta(remoteItemID: String, text: String) {
+        guard isPreparingInitialCoachTurn == false else { return }
+        ensureUserTurnReserved()
+        let shouldReplaceExistingText = activeUserTranscriptSource != .remote
+        activeUserTranscriptSource = .remote
+        upsertTranscript(
+            remoteItemID: remoteItemID,
+            role: .user,
+            text: text,
+            isFinal: false,
+            replaceStreamingText: shouldReplaceExistingText
+        )
+    }
+
+    private func finalizeUserTranscript(remoteItemID: String, text: String) {
+        upsertTranscript(remoteItemID: remoteItemID, role: .user, text: text, isFinal: true)
     }
 
     private func handleAssistantOutputStarted() {
