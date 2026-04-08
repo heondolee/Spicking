@@ -49,6 +49,11 @@ final class AudioEngineService {
         CACurrentMediaTime() - lastSpeechDetectedAt <= 1.7
     }
 
+    var secondsSinceLastSpeechActivity: CFTimeInterval {
+        guard lastSpeechDetectedAt > 0 else { return .greatestFiniteMagnitude }
+        return CACurrentMediaTime() - lastSpeechDetectedAt
+    }
+
     func start() async throws {
         try configureAudioSession()
         await configureSpeechRecognition()

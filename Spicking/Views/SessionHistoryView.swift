@@ -85,9 +85,10 @@ private struct HistoryBubble: View {
     }
 
     private var bubble: some View {
-        Text(entry.text)
-            .font(.body)
-            .foregroundStyle(isAssistant ? .white : SpickingPalette.ink)
+        HistoryBubbleText(
+            text: entry.text,
+            foregroundColor: isAssistant ? .white : SpickingPalette.ink
+        )
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .padding(isAssistant ? .leading : .trailing, 10)
@@ -145,6 +146,28 @@ private struct HistoryBubble: View {
                     )
                         .stroke(SpickingPalette.outline.opacity(0.88), lineWidth: 1.2)
                 )
+        }
+    }
+}
+
+private struct HistoryBubbleText: View {
+    let text: String
+    let foregroundColor: Color
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            Text(text)
+                .font(.body)
+                .foregroundStyle(foregroundColor)
+                .multilineTextAlignment(.leading)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Text(text)
+                .font(.body)
+                .foregroundStyle(foregroundColor)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

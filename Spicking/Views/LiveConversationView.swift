@@ -231,12 +231,11 @@ private struct TranscriptBubble: View {
     }
 
     private func transcriptBubbleBody(text: String) -> some View {
-        Text(text)
-        .font(.body)
-        .foregroundStyle(isAssistant ? .white : SpickingPalette.ink)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: bubbleTextMaxWidth, alignment: .leading)
+        BubbleTextBlock(
+            text: text,
+            maxWidth: bubbleTextMaxWidth,
+            foregroundColor: isAssistant ? .white : SpickingPalette.ink
+        )
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(background)
@@ -327,12 +326,11 @@ private struct AssistantSentenceBubbleSequence: View {
     }
 
     private func assistantBubble(text: String, position: BubbleStackPosition) -> some View {
-        Text(text)
-        .font(.body)
-        .foregroundStyle(.white)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: bubbleTextMaxWidth, alignment: .leading)
+        BubbleTextBlock(
+            text: text,
+            maxWidth: bubbleTextMaxWidth,
+            foregroundColor: .white
+        )
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(bubbleBackground(for: position))
@@ -482,5 +480,29 @@ private struct LoadingEllipsisText: View {
                     dotCount = dotCount % 3 + 1
                 }
             }
+    }
+}
+
+private struct BubbleTextBlock: View {
+    let text: String
+    let maxWidth: CGFloat
+    let foregroundColor: Color
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            Text(text)
+                .font(.body)
+                .foregroundStyle(foregroundColor)
+                .multilineTextAlignment(.leading)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Text(text)
+                .font(.body)
+                .foregroundStyle(foregroundColor)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: maxWidth, alignment: .leading)
+        }
     }
 }
