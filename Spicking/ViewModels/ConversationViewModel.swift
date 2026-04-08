@@ -347,13 +347,15 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     }
 
     private func handleAssistantTranscript(itemID: String, text: String, isFinal: Bool) {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return }
+        let transcript = isFinal
+            ? text.trimmingCharacters(in: .whitespacesAndNewlines)
+            : text.trimmingCharacters(in: .newlines)
+        guard transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return }
         handleAssistantOutputStarted()
         upsertTranscript(
             remoteItemID: itemID,
             role: .assistant,
-            text: cleaned,
+            text: transcript,
             isFinal: isFinal,
             replaceStreamingText: isFinal
         )
