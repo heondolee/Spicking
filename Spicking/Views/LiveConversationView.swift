@@ -293,7 +293,7 @@ struct LiveConversationView: View {
                                 .id(line.id)
                         }
                         Color.clear
-                            .frame(height: 120)
+                            .frame(height: 180)
                             .allowsHitTesting(false)
                             .id(ScrollAnchor.bottomSpacer)
                     }
