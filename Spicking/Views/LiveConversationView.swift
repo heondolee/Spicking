@@ -24,10 +24,6 @@ struct LiveConversationView: View {
             transcriptArea
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .padding(.horizontal, 10)
-                .overlay(alignment: .top) {
-                    speakingState
-                        .padding(20)
-                }
                 .overlay(alignment: .bottom) {
                     bottomControls
                         .padding(.horizontal, 18)
@@ -93,16 +89,12 @@ struct LiveConversationView: View {
 
     private var speakingState: some View {
         HStack(spacing: 10) {
-            Image(systemName: (viewModel.isAwaitingInitialCoachResponse || viewModel.assistantSpeaking) ? "speaker.wave.2.fill" : "mic.fill")
+            Image(systemName: speakingStateIconName)
                 .font(.headline.weight(.bold))
-                .foregroundStyle((viewModel.isAwaitingInitialCoachResponse || viewModel.assistantSpeaking) ? SpickingPalette.ocean : SpickingPalette.coral)
-                .symbolEffect(.pulse.byLayer, options: .repeating, value: viewModel.isAwaitingInitialCoachResponse || viewModel.assistantSpeaking)
+                .foregroundStyle(speakingStateIconColor)
+                .symbolEffect(.pulse.byLayer, options: .repeating, value: (viewModel.isAwaitingInitialCoachResponse || viewModel.assistantSpeaking) && !viewModel.isPaused)
 
-            Text(
-                viewModel.assistantSpeaking
-                    ? "AI가 말하는 중"
-                    : (viewModel.isAwaitingInitialCoachResponse ? "AI가 준비중이에요" : "이제 말해보세요")
-            )
+            Text(speakingStateTitle)
                 .font(.headline.weight(.bold))
                 .foregroundStyle(SpickingPalette.ink)
         }
@@ -119,17 +111,48 @@ struct LiveConversationView: View {
         )
     }
 
-    private var bottomControls: some View {
-        ZStack {
-            HStack {
-                pauseButton
-                Spacer()
-                if viewModel.inputMode == .manual {
-                    sendButton
-                }
-            }
+    private var speakingStateIconName: String {
+        if viewModel.isPaused {
+            return "pause.fill"
+        }
+        if viewModel.isAwaitingInitialCoachResponse || viewModel.assistantSpeaking {
+            return "speaker.wave.2.fill"
+        }
+        return "mic.fill"
+    }
 
-            modeControls
+    private var speakingStateIconColor: Color {
+        if viewModel.isPaused {
+            return SpickingPalette.ink
+        }
+        if viewModel.isAwaitingInitialCoachResponse || viewModel.assistantSpeaking {
+            return SpickingPalette.ocean
+        }
+        return SpickingPalette.coral
+    }
+
+    private var speakingStateTitle: String {
+        if viewModel.isPaused {
+            return "일시중지중"
+        }
+        if viewModel.assistantSpeaking {
+            return "AI가 말하는 중"
+        }
+        if viewModel.isAwaitingInitialCoachResponse {
+            return "AI가 준비중이에요"
+        }
+        return "이제 말해보세요"
+    }
+
+    private var bottomControls: some View {
+        VStack(spacing: 12) {
+            speakingState
+
+            HStack(spacing: 12) {
+                pauseButton
+                modeControls
+                sendButton
+            }
         }
     }
 
@@ -201,8 +224,8 @@ struct LiveConversationView: View {
         )
         .buttonStyle(.plain)
         .disabled(!viewModel.canSendCurrentTurnManually)
-        .opacity(viewModel.canSendCurrentTurnManually ? 1 : 0.55)
-        .allowsHitTesting(viewModel.canSendCurrentTurnManually)
+        .opacity(viewModel.inputMode == .manual ? (viewModel.canSendCurrentTurnManually ? 1 : 0.55) : 0)
+        .allowsHitTesting(viewModel.inputMode == .manual && viewModel.canSendCurrentTurnManually)
     }
 
     private func modeSegment(title: String, mode: ConversationInputMode) -> some View {
