@@ -28,7 +28,7 @@ struct LiveConversationView: View {
                 .overlay(alignment: .bottom) {
                     bottomControls
                         .padding(.horizontal, 18)
-                        .padding(.bottom, 10)
+                        .padding(.bottom, 18)
                 }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -124,12 +124,12 @@ struct SessionHistoryView: View {
                             HistoryTranscriptBubble(
                                 entry: entry,
                                 suggestion: suggestion(for: entry),
-                                savedExpressions: savedExpressions,
+                                savedBubbleKeys: savedBubbleKeys,
                                 onSpeak: { bubbleID, text in
                                     speechPlayer.speak(bubbleID: bubbleID, text: text)
                                 },
-                                onSavePhrase: { suggestion, phrase in
-                                    savePhrase(from: suggestion, phrase: phrase)
+                                onToggleSave: { payload in
+                                    toggleSavedBubble(payload)
                                 },
                                 activeBubbleID: speechPlayer.activeBubbleID,
                                 loadingBubbleID: speechPlayer.loadingBubbleID
@@ -157,8 +157,8 @@ struct SessionHistoryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private var savedExpressions: Set<String> {
-        Set(phraseCards.map(\.expressionEn))
+    private var savedBubbleKeys: Set<String> {
+        Set(phraseCards.map { bubbleSaveKey(sourceOriginalText: $0.sourceOriginalText, expressionEn: $0.expressionEn) })
     }
 
     private func suggestion(for entry: TranscriptEntry) -> ReviewSuggestion? {
@@ -168,15 +168,26 @@ struct SessionHistoryView: View {
         }
     }
 
-    private func savePhrase(from suggestion: ReviewSuggestion, phrase: RecommendedPhrase) {
-        guard !savedExpressions.contains(phrase.expressionEn) else { return }
+    private func bubbleSaveKey(sourceOriginalText: String, expressionEn: String) -> String {
+        "\(sourceOriginalText)|\(expressionEn)"
+    }
+
+    private func toggleSavedBubble(_ payload: BubbleSavePayload) {
+        let key = bubbleSaveKey(sourceOriginalText: payload.sourceOriginalText, expressionEn: payload.expressionEn)
+        if let existing = phraseCards.first(where: {
+            bubbleSaveKey(sourceOriginalText: $0.sourceOriginalText, expressionEn: $0.expressionEn) == key
+        }) {
+            modelContext.delete(existing)
+            try? modelContext.save()
+            return
+        }
 
         let card = PhraseCard(
-            intentKo: suggestion.intentKo,
-            expressionEn: phrase.expressionEn,
-            sourceOriginalText: suggestion.originalText,
-            naturalRewrite: suggestion.naturalRewrite,
-            usageNoteKo: phrase.usageNoteKo,
+            intentKo: payload.intentKo,
+            expressionEn: payload.expressionEn,
+            sourceOriginalText: payload.sourceOriginalText,
+            naturalRewrite: payload.naturalRewrite,
+            usageNoteKo: payload.usageNoteKo,
             tags: [],
             sourceSessionID: session.id
         )
@@ -185,12 +196,20 @@ struct SessionHistoryView: View {
     }
 }
 
+private struct BubbleSavePayload: Hashable {
+    let sourceOriginalText: String
+    let expressionEn: String
+    let naturalRewrite: String
+    let intentKo: String
+    let usageNoteKo: String
+}
+
 private struct HistoryTranscriptBubble: View {
     let entry: TranscriptEntry
     let suggestion: ReviewSuggestion?
-    let savedExpressions: Set<String>
+    let savedBubbleKeys: Set<String>
     let onSpeak: (String, String) -> Void
-    let onSavePhrase: (ReviewSuggestion, RecommendedPhrase) -> Void
+    let onToggleSave: (BubbleSavePayload) -> Void
     let activeBubbleID: String?
     let loadingBubbleID: String?
 
@@ -230,11 +249,12 @@ private struct HistoryTranscriptBubble: View {
 
     private var bubbleColumn: some View {
         VStack(alignment: isAssistant ? .leading : .trailing, spacing: 8) {
-            bubble
+            bubbleRow
 
             if activeBubbleID == bubbleID || loadingBubbleID == bubbleID {
-                playbackBadge(isAssistant: false, isLoading: loadingBubbleID == bubbleID)
+                playbackBadge(isLoading: loadingBubbleID == bubbleID)
                     .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .trailing)
+                    .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
             }
 
             if !isAssistant, let suggestion, displayedText != entry.text {
@@ -243,10 +263,20 @@ private struct HistoryTranscriptBubble: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .trailing)
             }
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: activeBubbleID == bubbleID || loadingBubbleID == bubbleID)
+    }
 
-            if !isAssistant, let suggestion, !suggestion.recommendedPhrases.isEmpty {
-                recommendedPhraseList(for: suggestion)
+    @ViewBuilder
+    private var bubbleRow: some View {
+        if isAssistant {
+            bubble
+        } else {
+            HStack(alignment: .center, spacing: 10) {
+                saveButton
+                bubble
             }
+            .frame(maxWidth: bubbleTextMaxWidth + 72, alignment: .trailing)
         }
     }
 
@@ -258,6 +288,8 @@ private struct HistoryTranscriptBubble: View {
                 text: displayedText,
                 bubbleTextMaxWidth: bubbleTextMaxWidth,
                 onSpeak: onSpeak,
+                onToggleSave: onToggleSave,
+                savedBubbleKeys: savedBubbleKeys,
                 activeBubbleID: activeBubbleID,
                 loadingBubbleID: loadingBubbleID
             )
@@ -294,18 +326,53 @@ private struct HistoryTranscriptBubble: View {
         }
     }
 
-    private func playbackBadge(isAssistant: Bool, isLoading: Bool) -> some View {
+    private var savePayload: BubbleSavePayload {
+        if let suggestion, !isAssistant {
+            return BubbleSavePayload(
+                sourceOriginalText: suggestion.originalText,
+                expressionEn: displayedText,
+                naturalRewrite: suggestion.naturalRewrite,
+                intentKo: suggestion.intentKo,
+                usageNoteKo: suggestion.reasonKo.isEmpty ? "내 문장을 더 자연스럽게 다듬은 표현이에요." : suggestion.reasonKo
+            )
+        }
+
+        return BubbleSavePayload(
+            sourceOriginalText: entry.text,
+            expressionEn: displayedText,
+            naturalRewrite: displayedText,
+            intentKo: isAssistant ? "코치가 실제로 사용한 표현" : "대화에서 남긴 내 표현",
+            usageNoteKo: isAssistant ? "대화에서 바로 따라 써볼 수 있는 표현이에요." : "내가 실제로 사용한 표현이에요."
+        )
+    }
+
+    private var isSaved: Bool {
+        savedBubbleKeys.contains("\(savePayload.sourceOriginalText)|\(savePayload.expressionEn)")
+    }
+
+    private var saveButton: some View {
+        Button {
+            onToggleSave(savePayload)
+        } label: {
+            Image(systemName: isSaved ? "checkmark.circle.fill" : "plus.circle.fill")
+                .font(.title3.weight(.bold))
+                .foregroundStyle(isSaved ? SpickingPalette.ocean : SpickingPalette.teal)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func playbackBadge(isLoading: Bool) -> some View {
         HStack(spacing: 6) {
             Image(systemName: isLoading ? "waveform" : "speaker.wave.2.fill")
             Text(isLoading ? "읽는 중…" : "재생 중")
         }
         .font(.caption2.weight(.semibold))
-        .foregroundStyle(isAssistant ? Color.white.opacity(0.96) : SpickingPalette.ocean)
+        .foregroundStyle(SpickingPalette.ocean)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
             Capsule(style: .continuous)
-                .fill(isAssistant ? Color.white.opacity(0.18) : SpickingPalette.ocean.opacity(0.12))
+                .fill(SpickingPalette.ocean.opacity(0.12))
         )
     }
 
@@ -339,7 +406,19 @@ private struct HistoryTranscriptBubble: View {
                         ),
                         style: .continuous
                     )
-                    .stroke(Color.white.opacity(0.4), lineWidth: 1.6)
+                    .stroke(Color.white.opacity(0.75), lineWidth: 0.9)
+                    .overlay(
+                        UnevenRoundedRectangle(
+                            cornerRadii: .init(
+                                topLeading: 24,
+                                bottomLeading: 24,
+                                bottomTrailing: 24,
+                                topTrailing: 24
+                            ),
+                            style: .continuous
+                        )
+                        .stroke(Color.black.opacity(0.14), lineWidth: 1.2)
+                    )
                 }
             }
         } else {
@@ -369,44 +448,6 @@ private struct HistoryTranscriptBubble: View {
         }
     }
 
-    private func recommendedPhraseList(for suggestion: ReviewSuggestion) -> some View {
-        VStack(alignment: .trailing, spacing: 8) {
-            ForEach(suggestion.recommendedPhrases, id: \.expressionEn) { phrase in
-                HStack(spacing: 10) {
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text(phrase.expressionEn)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(SpickingPalette.ink)
-                            .multilineTextAlignment(.trailing)
-                        Text(phrase.usageNoteKo)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    }
-
-                    Button {
-                        onSavePhrase(suggestion, phrase)
-                    } label: {
-                        Image(systemName: savedExpressions.contains(phrase.expressionEn) ? "checkmark.circle.fill" : "plus.circle.fill")
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(savedExpressions.contains(phrase.expressionEn) ? SpickingPalette.ocean : SpickingPalette.teal)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color.white.opacity(0.82))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(SpickingPalette.outline.opacity(0.72), lineWidth: 1)
-                        )
-                )
-                .frame(maxWidth: bubbleTextMaxWidth + 52, alignment: .trailing)
-            }
-        }
-    }
 }
 
 private struct HistoryAssistantSentenceBubbleSequence: View {
@@ -414,6 +455,8 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
     let text: String
     let bubbleTextMaxWidth: CGFloat
     let onSpeak: (String, String) -> Void
+    let onToggleSave: (BubbleSavePayload) -> Void
+    let savedBubbleKeys: Set<String>
     let activeBubbleID: String?
     let loadingBubbleID: String?
 
@@ -426,25 +469,52 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
             ForEach(Array(renderedSegments.enumerated()), id: \.offset) { index, sentence in
                 let bubbleID = "assistant-\(entryID)-\(index)"
                 VStack(alignment: .leading, spacing: 6) {
-                    Button {
-                        onSpeak(bubbleID, sentence)
-                    } label: {
-                        assistantBubble(
-                            text: sentence,
-                            position: bubblePosition(for: index, totalCount: renderedSegments.count),
-                            isSpeaking: activeBubbleID == bubbleID || loadingBubbleID == bubbleID
-                        )
+                    HStack(alignment: .center, spacing: 10) {
+                        Button {
+                            onSpeak(bubbleID, sentence)
+                        } label: {
+                            assistantBubble(
+                                text: sentence,
+                                position: bubblePosition(for: index, totalCount: renderedSegments.count),
+                                isSpeaking: activeBubbleID == bubbleID || loadingBubbleID == bubbleID
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        assistantSaveButton(for: sentence)
                     }
-                    .buttonStyle(.plain)
 
                     if activeBubbleID == bubbleID || loadingBubbleID == bubbleID {
                         playbackBadge(isLoading: loadingBubbleID == bubbleID)
                             .padding(.leading, 2)
+                            .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
                     }
                 }
             }
         }
         .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .leading)
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: activeBubbleID)
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: loadingBubbleID)
+    }
+
+    private func assistantSaveButton(for sentence: String) -> some View {
+        let payload = BubbleSavePayload(
+            sourceOriginalText: sentence,
+            expressionEn: sentence,
+            naturalRewrite: sentence,
+            intentKo: "코치가 실제로 사용한 표현",
+            usageNoteKo: "대화에서 바로 따라 써볼 수 있는 표현이에요."
+        )
+        let isSaved = savedBubbleKeys.contains("\(payload.sourceOriginalText)|\(payload.expressionEn)")
+
+        return Button {
+            onToggleSave(payload)
+        } label: {
+            Image(systemName: isSaved ? "checkmark.circle.fill" : "plus.circle.fill")
+                .font(.title3.weight(.bold))
+                .foregroundStyle(isSaved ? SpickingPalette.ocean : SpickingPalette.teal)
+        }
+        .buttonStyle(.plain)
     }
 
     private func assistantBubble(text: String, position: HistoryBubbleStackPosition, isSpeaking: Bool) -> some View {
@@ -473,20 +543,32 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
                 )
             )
         )
-        .overlay {
-            if isSpeaking {
-                UnevenRoundedRectangle(
-                    cornerRadii: .init(
-                        topLeading: position.topRadius,
+            .overlay {
+                if isSpeaking {
+                    UnevenRoundedRectangle(
+                        cornerRadii: .init(
+                            topLeading: position.topRadius,
                         bottomLeading: position.bottomRadius,
                         bottomTrailing: 24,
-                        topTrailing: 24
-                    ),
-                    style: .continuous
-                )
-                .stroke(Color.white.opacity(0.42), lineWidth: 1.6)
+                            topTrailing: 24
+                        ),
+                        style: .continuous
+                    )
+                    .stroke(Color.white.opacity(0.75), lineWidth: 0.9)
+                    .overlay(
+                        UnevenRoundedRectangle(
+                            cornerRadii: .init(
+                                topLeading: position.topRadius,
+                                bottomLeading: position.bottomRadius,
+                                bottomTrailing: 24,
+                                topTrailing: 24
+                            ),
+                            style: .continuous
+                        )
+                        .stroke(Color.black.opacity(0.14), lineWidth: 1.2)
+                    )
+                }
             }
-        }
     }
 
     private func playbackBadge(isLoading: Bool) -> some View {
@@ -495,24 +577,13 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
             Text(isLoading ? "읽는 중…" : "재생 중")
         }
         .font(.caption2.weight(.semibold))
-        .foregroundStyle(Color.white)
+        .foregroundStyle(SpickingPalette.ocean)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
             Capsule(style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [SpickingPalette.ocean.opacity(0.92), SpickingPalette.teal.opacity(0.92)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(SpickingPalette.ocean.opacity(0.12))
         )
-        .overlay(
-            Capsule(style: .continuous)
-                .stroke(Color.white.opacity(0.28), lineWidth: 1)
-        )
-        .shadow(color: SpickingPalette.ocean.opacity(0.16), radius: 8, y: 4)
     }
 
     private func bubblePosition(for index: Int, totalCount: Int) -> HistoryBubbleStackPosition {
