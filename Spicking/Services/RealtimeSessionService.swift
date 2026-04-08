@@ -330,6 +330,8 @@ enum PromptLibrary {
     - Focus only on user sentences that are worth improving.
     - "minimalRewrite" should stay close to the user's wording.
     - "naturalRewrite" should sound natural but still realistic for an English learner.
+    - "naturalRewrite" must be meaningfully different from "originalText". Do not repeat the original sentence with only punctuation, capitalization, or tiny edits.
+    - If the original sentence is already natural enough, skip it and choose another user sentence instead.
     - "intentKo" must be a natural Korean interpretation of what the user meant, written like a smooth translation rather than a label.
     - "reasonKo" must be in Korean and explain concretely why the new sentence sounds smoother, clearer, or more natural in conversation.
     """
