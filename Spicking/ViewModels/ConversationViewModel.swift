@@ -29,12 +29,15 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private var realtimeSessionService: RealtimeSessionService?
     private var sessionRecord: ConversationSession?
     private var transcriptEntriesByRemoteID: [String: TranscriptEntry] = [:]
+    private var locallyConfirmedUserItemIDs: Set<String> = []
     private var nextSequence = 0
     private var hasStarted = false
     private var activeUserRemoteItemID: String?
     private var activeUserTranscriptSource: UserTranscriptSource?
     private var activeUserLocalTranscriptFinalized = false
+    private var activeUserHadVisibleLocalTranscript = false
     private var activeUserTurnDetectedSpeech = false
+    private var activeUserSpeechDetectionCount = 0
     private var initialCoachPlaybackStarted = false
     private var liveTranscriptSyncTask: Task<Void, Never>?
     private var pendingAssistantResponseTask: Task<Void, Never>?
@@ -213,6 +216,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         pendingAssistantResponseTask?.cancel()
         ensureUserTurnReserved()
         activeUserTurnDetectedSpeech = true
+        activeUserSpeechDetectionCount += 1
         guard assistantSpeaking else { return }
 
         let playbackSnapshot = audioEngineService?.interruptPlayback()
@@ -244,6 +248,10 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             }
         } else if role == .user, let activeUserRemoteItemID, let reservedEntry = transcriptEntriesByRemoteID[activeUserRemoteItemID] {
             transcriptEntriesByRemoteID.removeValue(forKey: activeUserRemoteItemID)
+            if locallyConfirmedUserItemIDs.contains(activeUserRemoteItemID) {
+                locallyConfirmedUserItemIDs.remove(activeUserRemoteItemID)
+                locallyConfirmedUserItemIDs.insert(remoteItemID)
+            }
             reservedEntry.remoteItemID = remoteItemID
             entry = reservedEntry
             transcriptEntriesByRemoteID[remoteItemID] = entry
@@ -296,6 +304,8 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         guard !cleaned.isEmpty else { return }
         activeUserTranscriptSource = .local
         activeUserLocalTranscriptFinalized = activeUserLocalTranscriptFinalized || isFinal
+        activeUserHadVisibleLocalTranscript = true
+        locallyConfirmedUserItemIDs.insert(activeUserRemoteItemID)
 
         upsertTranscript(
             remoteItemID: activeUserRemoteItemID,
@@ -324,7 +334,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         activeUserRemoteItemID = placeholderID
         activeUserTranscriptSource = nil
         activeUserLocalTranscriptFinalized = false
+        activeUserHadVisibleLocalTranscript = false
         activeUserTurnDetectedSpeech = false
+        activeUserSpeechDetectionCount = 0
         modelContext.insert(entry)
         try? modelContext.save()
     }
@@ -400,7 +412,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         self.activeUserRemoteItemID = nil
         activeUserTranscriptSource = nil
         activeUserLocalTranscriptFinalized = false
+        activeUserHadVisibleLocalTranscript = false
         activeUserTurnDetectedSpeech = false
+        activeUserSpeechDetectionCount = 0
         try? modelContext.save()
         scheduleLiveTranscriptSync()
     }
@@ -408,13 +422,27 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private func shouldKeepFinalizedUserTurn(text: String) -> Bool {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.isEmpty == false else { return false }
-        guard activeUserTurnDetectedSpeech else { return false }
+        guard hasConfirmedUserSpeech(for: cleaned) else { return false }
 
         if hasSufficientSpokenContent(cleaned) {
             return true
         }
 
         return activeUserTranscriptSource == .local && activeUserLocalTranscriptFinalized && cleaned.count >= 6
+    }
+
+    private func hasConfirmedUserSpeech(for text: String) -> Bool {
+        if activeUserSpeechDetectionCount >= 2 {
+            return true
+        }
+
+        if activeUserTranscriptSource == .local && activeUserLocalTranscriptFinalized {
+            return true
+        }
+
+        return activeUserHadVisibleLocalTranscript
+            && activeUserTurnDetectedSpeech
+            && text.count >= 8
     }
 
     private func hasSufficientSpokenContent(_ text: String) -> Bool {
@@ -427,12 +455,15 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         if let entry = transcriptEntriesByRemoteID.removeValue(forKey: remoteItemID) {
             modelContext.delete(entry)
         }
+        locallyConfirmedUserItemIDs.remove(remoteItemID)
         if activeUserRemoteItemID == remoteItemID {
             activeUserRemoteItemID = nil
         }
         activeUserTranscriptSource = nil
         activeUserLocalTranscriptFinalized = false
+        activeUserHadVisibleLocalTranscript = false
         activeUserTurnDetectedSpeech = false
+        activeUserSpeechDetectionCount = 0
         try? modelContext.save()
         scheduleLiveTranscriptSync()
     }
@@ -478,6 +509,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         }
         let cleaned = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.isEmpty == false else { return false }
+        guard locallyConfirmedUserItemIDs.contains(remoteItemID) else { return false }
         return hasSufficientSpokenContent(cleaned)
     }
 
