@@ -1,8 +1,11 @@
 import Combine
 import SwiftUI
-import UIKit
 
 struct LiveConversationView: View {
+    private enum ScrollAnchor {
+        static let bottomSpacer = "conversation_bottom_spacer"
+    }
+
     @ObservedObject var viewModel: ConversationViewModel
     let onClose: () -> Void
     @State private var showCancelAlert = false
@@ -130,6 +133,7 @@ struct LiveConversationView: View {
                         Color.clear
                             .frame(height: 74)
                             .allowsHitTesting(false)
+                            .id(ScrollAnchor.bottomSpacer)
                     }
                     .frame(maxWidth: .infinity, alignment: .top)
                     .padding(.horizontal, 18)
@@ -147,15 +151,13 @@ struct LiveConversationView: View {
                         .removeDuplicates()
                 ) { signature in
                     guard !signature.isEmpty else { return }
-                    let lastID = String(signature.split(separator: "|", maxSplits: 1).first ?? "")
-                    guard !lastID.isEmpty else { return }
                     pendingScrollTask?.cancel()
                     pendingScrollTask = Task {
                         try? await Task.sleep(nanoseconds: 30_000_000)
                         guard Task.isCancelled == false else { return }
                         await MainActor.run {
                             withAnimation(.easeOut(duration: 0.22)) {
-                                proxy.scrollTo(lastID, anchor: .bottom)
+                                proxy.scrollTo(ScrollAnchor.bottomSpacer, anchor: .bottom)
                             }
                         }
                     }
@@ -198,7 +200,7 @@ private struct TranscriptBubble: View {
     let line: LiveTranscriptLine
 
     private var bubbleTextMaxWidth: CGFloat {
-        250
+        320
     }
 
     private var isAssistant: Bool {
@@ -229,11 +231,11 @@ private struct TranscriptBubble: View {
     }
 
     private func transcriptBubbleBody(text: String) -> some View {
-        StreamingTranscriptLabel(
-            text: text,
-            tokenRevealDelay: isAssistant ? 55_000_000 : 35_000_000,
-            textColor: UIColor(isAssistant ? .white : SpickingPalette.ink)
-        )
+        Text(text)
+        .font(.body)
+        .foregroundStyle(isAssistant ? .white : SpickingPalette.ink)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: bubbleTextMaxWidth, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -301,8 +303,6 @@ private struct AssistantSentenceBubbleSequence: View {
     let line: LiveTranscriptLine
     let bubbleTextMaxWidth: CGFloat
     @State private var renderedSegments: [String] = []
-    @State private var processedText = ""
-    @State private var pendingSentenceBreak = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -316,19 +316,22 @@ private struct AssistantSentenceBubbleSequence: View {
         }
         .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .leading)
         .onAppear {
-            applyTranscript(line.text, animated: false)
+            applyTranscript(line.text, isFinal: line.isFinal, animated: false)
         }
         .onChange(of: line.text) { _, _ in
-            applyTranscript(line.text, animated: true)
+            applyTranscript(line.text, isFinal: line.isFinal, animated: true)
+        }
+        .onChange(of: line.isFinal) { _, _ in
+            applyTranscript(line.text, isFinal: line.isFinal, animated: true)
         }
     }
 
     private func assistantBubble(text: String, position: BubbleStackPosition) -> some View {
-        StreamingTranscriptLabel(
-            text: text,
-            tokenRevealDelay: 55_000_000,
-            textColor: UIColor(.white)
-        )
+        Text(text)
+        .font(.body)
+        .foregroundStyle(.white)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: bubbleTextMaxWidth, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -368,54 +371,29 @@ private struct AssistantSentenceBubbleSequence: View {
         }
     }
 
-    private func applyTranscript(_ text: String, animated: Bool) {
+    private func applyTranscript(_ text: String, isFinal: Bool, animated: Bool) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.isEmpty == false else {
+        let nextSegments = sentenceSegments(from: trimmed, isFinal: isFinal)
+
+        guard nextSegments.isEmpty == false else {
             renderedSegments = []
-            processedText = ""
-            pendingSentenceBreak = false
             return
         }
 
-        if trimmed.hasPrefix(processedText) == false {
-            renderedSegments = []
-            processedText = ""
-            pendingSentenceBreak = false
+        guard nextSegments != renderedSegments else {
+            return
         }
 
-        let suffix = String(trimmed.dropFirst(processedText.count))
-        guard suffix.isEmpty == false else { return }
+        let commonPrefixCount = zip(renderedSegments, nextSegments).prefix { $0 == $1 }.count
+        let newSegments = Array(nextSegments.dropFirst(commonPrefixCount))
 
-        appendIncremental(suffix, animated: animated)
-        processedText = trimmed
-    }
-
-    private func appendIncremental(_ suffix: String, animated: Bool) {
-        for character in suffix {
-            if renderedSegments.isEmpty {
-                appendNewSegment("", animated: false)
+        if animated, commonPrefixCount == renderedSegments.count {
+            for segment in newSegments {
+                appendNewSegment(segment, animated: true)
             }
-
-            if pendingSentenceBreak, character.isWhitespace == false {
-                appendNewSegment(String(character), animated: animated)
-                pendingSentenceBreak = false
-                continue
-            }
-
-            if renderedSegments.isEmpty {
-                appendNewSegment(String(character), animated: false)
-            } else {
-                renderedSegments[renderedSegments.count - 1].append(character)
-            }
-
-            if character == "." || character == "!" || character == "?" {
-                pendingSentenceBreak = true
-            }
+        } else {
+            renderedSegments = nextSegments
         }
-
-        renderedSegments = renderedSegments
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.isEmpty == false }
     }
 
     private func appendNewSegment(_ text: String, animated: Bool) {
@@ -430,6 +408,33 @@ private struct AssistantSentenceBubbleSequence: View {
         } else {
             insertion()
         }
+    }
+
+    private func sentenceSegments(from text: String, isFinal: Bool) -> [String] {
+        guard text.isEmpty == false else { return [] }
+
+        let pattern = #"[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return isFinal ? [text] : []
+        }
+
+        let nsText = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+        var segments: [String] = []
+
+        for match in matches {
+            guard let range = Range(match.range, in: text) else { continue }
+            let segment = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard segment.isEmpty == false else { continue }
+
+            let lastCharacter = segment.last
+            let isCompletedSentence = lastCharacter == "." || lastCharacter == "!" || lastCharacter == "?"
+            if isCompletedSentence || isFinal {
+                segments.append(segment)
+            }
+        }
+
+        return segments
     }
 }
 
@@ -477,142 +482,5 @@ private struct LoadingEllipsisText: View {
                     dotCount = dotCount % 3 + 1
                 }
             }
-    }
-}
-
-private struct StreamingTranscriptLabel: UIViewRepresentable {
-    let text: String
-    let tokenRevealDelay: UInt64
-    let textColor: UIColor
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeUIView(context: Context) -> UILabel {
-        let label = WrappingLabel()
-        label.numberOfLines = 0
-        label.lineBreakMode = .byWordWrapping
-        label.font = UIFont.preferredFont(forTextStyle: .body)
-        label.adjustsFontForContentSizeCategory = true
-        label.textAlignment = .left
-        label.textColor = textColor
-        label.alpha = 0
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        label.setContentCompressionResistancePriority(.required, for: .vertical)
-        label.setContentHuggingPriority(.defaultHigh, for: .vertical)
-        context.coordinator.attach(to: label)
-        return label
-    }
-
-    func updateUIView(_ uiView: UILabel, context: Context) {
-        uiView.textColor = textColor
-        context.coordinator.update(text: text, tokenRevealDelay: tokenRevealDelay)
-    }
-
-    static func dismantleUIView(_ uiView: UILabel, coordinator: Coordinator) {
-        coordinator.cancel()
-    }
-
-    final class WrappingLabel: UILabel {
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            preferredMaxLayoutWidth = bounds.width
-        }
-    }
-
-    final class Coordinator {
-        private weak var label: UILabel?
-        private var displayedText = ""
-        private var revealTask: Task<Void, Never>?
-        private var hasAnimatedIn = false
-
-        func attach(to label: UILabel) {
-            self.label = label
-        }
-
-        func update(text newValue: String, tokenRevealDelay: UInt64) {
-            guard let label else { return }
-
-            if hasAnimatedIn == false {
-                hasAnimatedIn = true
-                label.alpha = 0
-                UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseIn, .beginFromCurrentState]) {
-                    label.alpha = 1
-                }
-            }
-
-            revealTask?.cancel()
-
-            if newValue == displayedText {
-                return
-            }
-
-            let sharedPrefix = commonPrefix(between: displayedText, and: newValue)
-            if sharedPrefix.count < displayedText.count {
-                displayedText = sharedPrefix
-                label.text = sharedPrefix
-            }
-
-            let suffix = String(newValue.dropFirst(sharedPrefix.count))
-            guard suffix.isEmpty == false else {
-                displayedText = newValue
-                label.text = newValue
-                return
-            }
-
-            let additionalUnits = tokenizeKeepingTrailingWhitespace(suffix)
-            guard additionalUnits.isEmpty == false else {
-                displayedText = newValue
-                label.text = newValue
-                return
-            }
-
-            revealTask = Task { [weak self] in
-                guard let self else { return }
-                for unit in additionalUnits {
-                    if Task.isCancelled { return }
-                    await MainActor.run {
-                        self.displayedText += unit
-                        self.label?.text = self.displayedText
-                    }
-                    guard unit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-                        continue
-                    }
-                    try? await Task.sleep(nanoseconds: tokenRevealDelay)
-                }
-            }
-        }
-
-        func cancel() {
-            revealTask?.cancel()
-        }
-
-        private func tokenizeKeepingTrailingWhitespace(_ text: String) -> [String] {
-            let nsText = text as NSString
-            let pattern = #"\S+\s*|\s+"#
-            guard let regex = try? NSRegularExpression(pattern: pattern) else {
-                return text.isEmpty ? [] : [text]
-            }
-
-            return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap {
-                Range($0.range, in: text).map { String(text[$0]) }
-            }
-        }
-
-        private func commonPrefix(between lhs: String, and rhs: String) -> String {
-            var prefix = ""
-            var leftIndex = lhs.startIndex
-            var rightIndex = rhs.startIndex
-
-            while leftIndex < lhs.endIndex, rightIndex < rhs.endIndex, lhs[leftIndex] == rhs[rightIndex] {
-                prefix.append(lhs[leftIndex])
-                leftIndex = lhs.index(after: leftIndex)
-                rightIndex = rhs.index(after: rightIndex)
-            }
-
-            return prefix
-        }
     }
 }
