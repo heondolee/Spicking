@@ -106,9 +106,6 @@ struct SessionHistoryView: View {
                         }
                     }
 
-                    Color.clear
-                        .frame(height: 180)
-                        .allowsHitTesting(false)
                 }
                 .frame(maxWidth: .infinity, alignment: .top)
                 .padding(.horizontal, 18)
