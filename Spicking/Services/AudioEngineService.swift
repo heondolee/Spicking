@@ -161,8 +161,8 @@ final class AudioEngineService {
 
     private func configureAudioSession() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers])
-        try session.setMode(.voiceChat)
+        try session.setCategory(.playAndRecord, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setMode(.default)
         try session.setPreferredSampleRate(24_000)
         try session.setActive(true, options: .notifyOthersOnDeactivation)
     }
@@ -172,6 +172,8 @@ final class AudioEngineService {
             outputEngine.attach(playerNode)
             outputEngine.connect(playerNode, to: outputEngine.mainMixerNode, format: playbackFormat)
         }
+        playerNode.volume = 1.0
+        outputEngine.mainMixerNode.outputVolume = 1.0
         if !outputEngine.isRunning {
             try outputEngine.start()
         }

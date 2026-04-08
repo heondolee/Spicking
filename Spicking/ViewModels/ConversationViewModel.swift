@@ -198,11 +198,6 @@ final class ConversationViewModel: ObservableObject, Identifiable {
                 self?.handleRemoteUserTranscriptDelta(remoteItemID: itemID, text: text)
             }
         }
-        realtimeService.onServerSpeechStarted = { [weak self] in
-            Task { @MainActor [weak self] in
-                await self?.handleUserSpeechDetected()
-            }
-        }
         realtimeService.onError = { [weak self] message in
             self?.errorMessage = message
         }
