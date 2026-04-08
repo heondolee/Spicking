@@ -495,13 +495,24 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
             Text(isLoading ? "읽는 중…" : "재생 중")
         }
         .font(.caption2.weight(.semibold))
-        .foregroundStyle(Color.white.opacity(0.96))
+        .foregroundStyle(Color.white)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
             Capsule(style: .continuous)
-                .fill(Color.white.opacity(0.16))
+                .fill(
+                    LinearGradient(
+                        colors: [SpickingPalette.ocean.opacity(0.92), SpickingPalette.teal.opacity(0.92)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
         )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(Color.white.opacity(0.28), lineWidth: 1)
+        )
+        .shadow(color: SpickingPalette.ocean.opacity(0.16), radius: 8, y: 4)
     }
 
     private func bubblePosition(for index: Int, totalCount: Int) -> HistoryBubbleStackPosition {
