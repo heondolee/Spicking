@@ -1,11 +1,17 @@
 import Combine
 import Foundation
+import NaturalLanguage
 import QuartzCore
 import SwiftData
 
 private enum UserTranscriptSource {
     case local
     case remote
+}
+
+enum ConversationInputMode: String {
+    case automatic
+    case manual
 }
 
 @MainActor
@@ -23,6 +29,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     @Published var isEndingSession = false
     @Published var isPreparingInitialCoachTurn = true
     @Published var isAwaitingInitialCoachResponse = true
+    @Published var inputMode: ConversationInputMode = .automatic
+    @Published var isPaused = false
+    @Published var isSendingManualTurn = false
 
     private let modelContext: ModelContext
     private let reviewService = ReviewService()
@@ -33,7 +42,8 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private var locallyConfirmedUserItemIDs: Set<String> = []
     private var locallyFinalizedUserItemIDs: Set<String> = []
     private var stronglyConfirmedUserItemIDs: Set<String> = []
-    private var displayedUserItemIDs: Set<String> = []
+    private var visibleLocalUserItemIDs: Set<String> = []
+    private var replyEligibleUserItemIDs: Set<String> = []
     private var nextSequence = 0
     private var hasStarted = false
     private var activeUserRemoteItemID: String?
@@ -47,6 +57,30 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private var pendingAssistantResponseTask: Task<Void, Never>?
     private var lastFinalizedUserRemoteItemID: String?
     private var lastAssistantResponseRequestedForUserItemID: String?
+    private var englishRecoveryAttemptsByUserItemID: [String: Int] = [:]
+    private var suppressNewUserTurnsUntil: CFTimeInterval = 0
+
+    private func logTurnGate(_ message: String) {
+#if DEBUG
+        print("[TurnGate] \(message)")
+#endif
+    }
+
+    var canSendCurrentTurnManually: Bool {
+        guard inputMode == .manual else { return false }
+        guard isPaused == false else { return false }
+        guard assistantSpeaking == false else { return false }
+        guard isPreparingInitialCoachTurn == false else { return false }
+        guard isSendingManualTurn == false else { return false }
+        guard let activeUserRemoteItemID,
+              let entry = transcriptEntriesByRemoteID[activeUserRemoteItemID]
+        else {
+            return false
+        }
+        guard locallyFinalizedUserItemIDs.contains(activeUserRemoteItemID) else { return false }
+
+        return entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
 
     init(topic: String, modelContext: ModelContext) {
         self.topic = topic
@@ -72,9 +106,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             statusMessage = "영어 코치와 연결 중이에요…"
             connectionState = .connecting
             try await audioEngine.start()
-            audioEngine.inputEnabled = false
             audioEngineService = audioEngine
             realtimeSessionService = realtimeService
+            syncAudioInputPolicy()
 
             try await realtimeService.connect(topic: topic)
             session.status = .live
@@ -166,6 +200,81 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         realtimeSessionService?.disconnect()
     }
 
+    func toggleInputMode() {
+        inputMode = inputMode == .automatic ? .manual : .automatic
+        syncAudioInputPolicy()
+        if inputMode == .automatic {
+            scheduleAssistantReply()
+        } else {
+            pendingAssistantResponseTask?.cancel()
+        }
+    }
+
+    func togglePause() async {
+        isPaused.toggle()
+        pendingAssistantResponseTask?.cancel()
+        syncAudioInputPolicy()
+
+        guard isPaused else { return }
+        guard assistantSpeaking else { return }
+
+        let playbackSnapshot = audioEngineService?.interruptPlayback()
+        assistantSpeaking = false
+        await realtimeSessionService?.interruptActiveResponse(playbackSnapshot: playbackSnapshot)
+    }
+
+    func sendCurrentTurnManually() async {
+        guard inputMode == .manual else { return }
+        guard isPaused == false else { return }
+        guard assistantSpeaking == false else { return }
+        guard isSendingManualTurn == false else { return }
+        guard let realtimeSessionService else { return }
+
+        isSendingManualTurn = true
+        defer { isSendingManualTurn = false }
+
+        if let activeUserRemoteItemID,
+           let entry = transcriptEntriesByRemoteID[activeUserRemoteItemID] {
+            let cleaned = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard cleaned.isEmpty == false else { return }
+            guard shouldKeepFinalizedUserTurn(remoteItemID: activeUserRemoteItemID, text: cleaned) else {
+                discardUserTurn(remoteItemID: activeUserRemoteItemID)
+                return
+            }
+
+            upsertTranscript(remoteItemID: activeUserRemoteItemID, role: .user, text: cleaned, isFinal: true)
+            syncLiveTranscriptLines()
+            guard hasVisibleUserBubble(for: activeUserRemoteItemID) else {
+                discardUserTurn(remoteItemID: activeUserRemoteItemID)
+                return
+            }
+            replyEligibleUserItemIDs.insert(activeUserRemoteItemID)
+            lastFinalizedUserRemoteItemID = activeUserRemoteItemID
+
+            do {
+                try await realtimeSessionService.submitUserTextTurn(cleaned)
+                lastAssistantResponseRequestedForUserItemID = activeUserRemoteItemID
+                try await realtimeSessionService.requestAssistantReply()
+            } catch {
+                lastAssistantResponseRequestedForUserItemID = nil
+                fail(with: error.localizedDescription)
+            }
+            return
+        }
+
+        if let lastFinalizedUserRemoteItemID,
+           lastAssistantResponseRequestedForUserItemID != lastFinalizedUserRemoteItemID,
+           canRespond(to: lastFinalizedUserRemoteItemID) {
+            do {
+                lastAssistantResponseRequestedForUserItemID = lastFinalizedUserRemoteItemID
+                try await realtimeSessionService.requestAssistantReply()
+            } catch {
+                lastAssistantResponseRequestedForUserItemID = nil
+                fail(with: error.localizedDescription)
+            }
+        }
+    }
+
     private func bind(audioEngine: AudioEngineService, realtimeService: RealtimeSessionService) {
         audioEngine.onAudioPCMData = { [weak realtimeService] data in
             realtimeService?.appendInputAudio(data)
@@ -217,8 +326,16 @@ final class ConversationViewModel: ObservableObject, Identifiable {
 
     private func handleUserSpeechDetected() async {
         guard isPreparingInitialCoachTurn == false else { return }
-        pendingAssistantResponseTask?.cancel()
-        ensureUserTurnReserved()
+        let now = CACurrentMediaTime()
+        if assistantSpeaking == false,
+           activeUserRemoteItemID == nil,
+           now < suppressNewUserTurnsUntil {
+            logTurnGate("ignored speech detection during cooldown")
+            return
+        }
+        if activeUserRemoteItemID != nil || assistantSpeaking {
+            pendingAssistantResponseTask?.cancel()
+        }
         activeUserTurnDetectedSpeech = true
         activeUserSpeechDetectionCount += 1
         if activeUserSpeechDetectionCount >= 3, let activeUserRemoteItemID {
@@ -267,9 +384,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
                 stronglyConfirmedUserItemIDs.remove(activeUserRemoteItemID)
                 stronglyConfirmedUserItemIDs.insert(remoteItemID)
             }
-            if displayedUserItemIDs.contains(activeUserRemoteItemID) {
-                displayedUserItemIDs.remove(activeUserRemoteItemID)
-                displayedUserItemIDs.insert(remoteItemID)
+            if visibleLocalUserItemIDs.contains(activeUserRemoteItemID) {
+                visibleLocalUserItemIDs.remove(activeUserRemoteItemID)
+                visibleLocalUserItemIDs.insert(remoteItemID)
             }
             reservedEntry.remoteItemID = remoteItemID
             entry = reservedEntry
@@ -300,8 +417,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             entry.endedAt = .now
             if role == .user {
                 activeUserRemoteItemID = nil
-                activeUserTranscriptSource = nil
-                activeUserLocalTranscriptFinalized = false
+                resetActiveUserTurnState()
             }
         }
 
@@ -317,6 +433,12 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private func handleLiveUserTranscription(text: String, isFinal: Bool) {
         guard isPreparingInitialCoachTurn == false else { return }
         guard activeUserTranscriptSource != .remote else { return }
+        let now = CACurrentMediaTime()
+        if activeUserRemoteItemID == nil, now < suppressNewUserTurnsUntil {
+            logTurnGate("ignored local transcript during cooldown text=\(text)")
+            return
+        }
+        pendingAssistantResponseTask?.cancel()
         ensureUserTurnReserved()
         guard let activeUserRemoteItemID else { return }
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -325,18 +447,23 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         activeUserLocalTranscriptFinalized = activeUserLocalTranscriptFinalized || isFinal
         activeUserHadVisibleLocalTranscript = true
         locallyConfirmedUserItemIDs.insert(activeUserRemoteItemID)
+        visibleLocalUserItemIDs.insert(activeUserRemoteItemID)
+        if activeUserSpeechDetectionCount >= 3 {
+            stronglyConfirmedUserItemIDs.insert(activeUserRemoteItemID)
+        }
         if isFinal {
             locallyFinalizedUserItemIDs.insert(activeUserRemoteItemID)
             stronglyConfirmedUserItemIDs.insert(activeUserRemoteItemID)
+            finalizeLocalUserTranscript(remoteItemID: activeUserRemoteItemID, text: cleaned)
+        } else {
+            upsertTranscript(
+                remoteItemID: activeUserRemoteItemID,
+                role: .user,
+                text: cleaned,
+                isFinal: false,
+                replaceStreamingText: true
+            )
         }
-
-        upsertTranscript(
-            remoteItemID: activeUserRemoteItemID,
-            role: .user,
-            text: cleaned,
-            isFinal: false,
-            replaceStreamingText: true
-        )
     }
 
     private func ensureUserTurnReserved() {
@@ -355,11 +482,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         )
         transcriptEntriesByRemoteID[placeholderID] = entry
         activeUserRemoteItemID = placeholderID
-        activeUserTranscriptSource = nil
-        activeUserLocalTranscriptFinalized = false
-        activeUserHadVisibleLocalTranscript = false
-        activeUserTurnDetectedSpeech = false
-        activeUserSpeechDetectionCount = 0
+        resetActiveUserTurnState()
         modelContext.insert(entry)
         try? modelContext.save()
     }
@@ -379,11 +502,17 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     }
 
     private func finalizeUserTranscript(remoteItemID: String, text: String) {
-        guard shouldKeepFinalizedUserTurn(text: text) else {
+        guard shouldKeepFinalizedUserTurn(remoteItemID: remoteItemID, text: text) else {
             discardUserTurn(remoteItemID: remoteItemID)
             return
         }
         upsertTranscript(remoteItemID: remoteItemID, role: .user, text: text, isFinal: true)
+        syncLiveTranscriptLines()
+        guard hasVisibleUserBubble(for: remoteItemID) else {
+            discardUserTurn(remoteItemID: remoteItemID)
+            return
+        }
+        replyEligibleUserItemIDs.insert(remoteItemID)
         lastFinalizedUserRemoteItemID = remoteItemID
         scheduleAssistantReply()
     }
@@ -393,6 +522,14 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             ? text.trimmingCharacters(in: .whitespacesAndNewlines)
             : text.trimmingCharacters(in: .newlines)
         guard transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return }
+
+        if shouldRejectAssistantTranscript(transcript, isFinal: isFinal) {
+            Task { @MainActor [weak self] in
+                await self?.handleInvalidAssistantResponse(itemID: itemID)
+            }
+            return
+        }
+
         handleAssistantOutputStarted()
         upsertTranscript(
             remoteItemID: itemID,
@@ -405,6 +542,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
 
     private func handleAssistantOutputStarted() {
         pendingAssistantResponseTask?.cancel()
+        suppressNewUserTurnsUntil = 0
         finalizeActiveUserDraftIfNeeded()
         if let lastFinalizedUserRemoteItemID {
             lastAssistantResponseRequestedForUserItemID = lastFinalizedUserRemoteItemID
@@ -433,19 +571,37 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         }
 
         self.activeUserRemoteItemID = nil
-        activeUserTranscriptSource = nil
-        activeUserLocalTranscriptFinalized = false
-        activeUserHadVisibleLocalTranscript = false
-        activeUserTurnDetectedSpeech = false
-        activeUserSpeechDetectionCount = 0
+        resetActiveUserTurnState()
         try? modelContext.save()
         scheduleLiveTranscriptSync()
     }
 
-    private func shouldKeepFinalizedUserTurn(text: String) -> Bool {
+    private func finalizeLocalUserTranscript(remoteItemID: String, text: String) {
+        logTurnGate("local final candidate id=\(remoteItemID) text=\(text)")
+        guard shouldKeepFinalizedUserTurn(remoteItemID: remoteItemID, text: text) else {
+            logTurnGate("discard local final id=\(remoteItemID)")
+            discardUserTurn(remoteItemID: remoteItemID)
+            return
+        }
+        upsertTranscript(remoteItemID: remoteItemID, role: .user, text: text, isFinal: true)
+        syncLiveTranscriptLines()
+        guard hasVisibleUserBubble(for: remoteItemID) else {
+            logTurnGate("discard invisible local final id=\(remoteItemID)")
+            discardUserTurn(remoteItemID: remoteItemID)
+            return
+        }
+        replyEligibleUserItemIDs.insert(remoteItemID)
+        lastFinalizedUserRemoteItemID = remoteItemID
+        suppressNewUserTurnsUntil = CACurrentMediaTime() + 0.9
+        logTurnGate("accepted local final id=\(remoteItemID)")
+        scheduleAssistantReply()
+    }
+
+    private func shouldKeepFinalizedUserTurn(remoteItemID: String, text: String) -> Bool {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.isEmpty == false else { return false }
-        guard activeUserHadVisibleLocalTranscript else { return false }
+        guard visibleLocalUserItemIDs.contains(remoteItemID) else { return false }
+        guard locallyFinalizedUserItemIDs.contains(remoteItemID) else { return false }
         guard hasConfirmedUserSpeech(for: cleaned) else { return false }
 
         if hasSufficientSpokenContent(cleaned) {
@@ -462,12 +618,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             return true
         }
 
-        if activeUserTranscriptSource == .local && activeUserLocalTranscriptFinalized {
-            return true
-        }
-
         return activeUserHadVisibleLocalTranscript
             && activeUserTurnDetectedSpeech
+            && activeUserSpeechDetectionCount >= 2
             && text.count >= 8
     }
 
@@ -477,6 +630,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     }
 
     private func discardUserTurn(remoteItemID: String) {
+        logTurnGate("discard turn id=\(remoteItemID)")
         pendingAssistantResponseTask?.cancel()
         if let entry = transcriptEntriesByRemoteID.removeValue(forKey: remoteItemID) {
             modelContext.delete(entry)
@@ -484,15 +638,12 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         locallyConfirmedUserItemIDs.remove(remoteItemID)
         locallyFinalizedUserItemIDs.remove(remoteItemID)
         stronglyConfirmedUserItemIDs.remove(remoteItemID)
-        displayedUserItemIDs.remove(remoteItemID)
+        visibleLocalUserItemIDs.remove(remoteItemID)
+        replyEligibleUserItemIDs.remove(remoteItemID)
         if activeUserRemoteItemID == remoteItemID {
             activeUserRemoteItemID = nil
         }
-        activeUserTranscriptSource = nil
-        activeUserLocalTranscriptFinalized = false
-        activeUserHadVisibleLocalTranscript = false
-        activeUserTurnDetectedSpeech = false
-        activeUserSpeechDetectionCount = 0
+        resetActiveUserTurnState()
         try? modelContext.save()
         scheduleLiveTranscriptSync()
     }
@@ -501,10 +652,12 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         guard isPreparingInitialCoachTurn, initialCoachPlaybackStarted else { return }
         isPreparingInitialCoachTurn = false
         isAwaitingInitialCoachResponse = false
-        audioEngineService?.inputEnabled = true
+        syncAudioInputPolicy()
     }
 
     private func scheduleAssistantReply() {
+        guard inputMode == .automatic else { return }
+        guard isPaused == false else { return }
         guard isPreparingInitialCoachTurn == false else { return }
         guard assistantSpeaking == false else { return }
         guard let realtimeSessionService else { return }
@@ -514,17 +667,22 @@ final class ConversationViewModel: ObservableObject, Identifiable {
 
         pendingAssistantResponseTask?.cancel()
         pendingAssistantResponseTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            try? await Task.sleep(nanoseconds: 350_000_000)
             guard let self, Task.isCancelled == false else { return }
             guard self.assistantSpeaking == false else { return }
             guard self.activeUserRemoteItemID == nil else { return }
             guard self.lastFinalizedUserRemoteItemID == lastFinalizedUserRemoteItemID else { return }
             guard self.lastAssistantResponseRequestedForUserItemID != lastFinalizedUserRemoteItemID else { return }
             guard self.canRespond(to: lastFinalizedUserRemoteItemID) else { return }
-            guard await self.waitForStableUserSilence() else { return }
 
             do {
+                guard let entry = self.transcriptEntriesByRemoteID[lastFinalizedUserRemoteItemID] else { return }
+                let cleaned = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard cleaned.isEmpty == false else { return }
+
+                self.logTurnGate("replying to id=\(lastFinalizedUserRemoteItemID) text=\(cleaned)")
                 self.lastAssistantResponseRequestedForUserItemID = lastFinalizedUserRemoteItemID
+                try await realtimeSessionService.submitUserTextTurn(cleaned)
                 try await realtimeSessionService.requestAssistantReply()
             } catch {
                 self.lastAssistantResponseRequestedForUserItemID = nil
@@ -537,42 +695,11 @@ final class ConversationViewModel: ObservableObject, Identifiable {
         guard let entry = transcriptEntriesByRemoteID[remoteItemID], entry.role == .user, entry.isFinal else {
             return false
         }
+        guard replyEligibleUserItemIDs.contains(remoteItemID) else { return false }
+        guard hasVisibleUserBubble(for: remoteItemID) else { return false }
         let cleaned = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.isEmpty == false else { return false }
-        guard shouldRespondToUserItem(remoteItemID, text: cleaned) else { return false }
         return hasSufficientSpokenContent(cleaned)
-    }
-
-    private func shouldRespondToUserItem(_ remoteItemID: String, text: String) -> Bool {
-        guard displayedUserItemIDs.contains(remoteItemID) else { return false }
-        guard locallyConfirmedUserItemIDs.contains(remoteItemID) else { return false }
-        guard stronglyConfirmedUserItemIDs.contains(remoteItemID) else { return false }
-
-        let wordCount = text.split(whereSeparator: \.isWhitespace).count
-        return wordCount >= 3 || text.count >= 14
-    }
-
-    private func waitForStableUserSilence() async -> Bool {
-        let requiredSilence: CFTimeInterval = 1.4
-        let deadline = CACurrentMediaTime() + 5.0
-
-        while Task.isCancelled == false {
-            guard assistantSpeaking == false else { return false }
-            guard activeUserRemoteItemID == nil else { return false }
-
-            let silence = audioEngineService?.secondsSinceLastSpeechActivity ?? requiredSilence
-            if silence >= requiredSilence {
-                return true
-            }
-
-            if CACurrentMediaTime() >= deadline {
-                return false
-            }
-
-            try? await Task.sleep(nanoseconds: 200_000_000)
-        }
-
-        return false
     }
 
     private func scheduleLiveTranscriptSync() {
@@ -582,6 +709,92 @@ final class ConversationViewModel: ObservableObject, Identifiable {
             guard let self, Task.isCancelled == false else { return }
             self.syncLiveTranscriptLines()
         }
+    }
+
+    private func resetActiveUserTurnState() {
+        activeUserTranscriptSource = nil
+        activeUserLocalTranscriptFinalized = false
+        activeUserHadVisibleLocalTranscript = false
+        activeUserTurnDetectedSpeech = false
+        activeUserSpeechDetectionCount = 0
+    }
+
+    private func hasVisibleUserBubble(for remoteItemID: String) -> Bool {
+        liveTranscriptLines.contains {
+            $0.id == remoteItemID
+                && $0.role == .user
+                && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+    }
+
+    private func shouldRejectAssistantTranscript(_ text: String, isFinal: Bool) -> Bool {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned.isEmpty == false else { return false }
+
+        if containsClearlyNonEnglishScript(cleaned) {
+            return true
+        }
+
+        guard isFinal else { return false }
+        guard cleaned.count >= 18 || cleaned.split(whereSeparator: \.isWhitespace).count >= 4 else { return false }
+
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(cleaned)
+        if let language = recognizer.dominantLanguage, language != .english {
+            return true
+        }
+
+        return false
+    }
+
+    private func containsClearlyNonEnglishScript(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x1100...0x11FF, 0x3130...0x318F, 0xAC00...0xD7AF, // Hangul
+                 0x3040...0x30FF, // Japanese
+                 0x4E00...0x9FFF, // CJK
+                 0x0600...0x06FF, // Arabic
+                 0x0400...0x04FF: // Cyrillic
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private func handleInvalidAssistantResponse(itemID: String) async {
+        let playbackSnapshot = audioEngineService?.interruptPlayback()
+        assistantSpeaking = false
+        await realtimeSessionService?.interruptActiveResponse(playbackSnapshot: playbackSnapshot)
+
+        if let entry = transcriptEntriesByRemoteID.removeValue(forKey: itemID) {
+            modelContext.delete(entry)
+            try? modelContext.save()
+            syncLiveTranscriptLines()
+        }
+
+        let retryKey = lastFinalizedUserRemoteItemID ?? "__kickoff__"
+        let attempts = englishRecoveryAttemptsByUserItemID[retryKey, default: 0]
+        guard attempts < 1 else { return }
+        englishRecoveryAttemptsByUserItemID[retryKey] = attempts + 1
+
+        do {
+            try await realtimeSessionService?.requestAssistantReply(customInstructions: """
+            Your previous reply was not acceptable because it was not fully in English.
+            Restart your reply and answer in natural spoken English only.
+            Do not use Korean, Spanish, Japanese, Chinese, or any other non-English language.
+            If the user used a Korean word, explain it briefly in simple English only, then continue the conversation in English.
+            Keep the reply short and ask exactly one follow-up question.
+            """)
+        } catch {
+            fail(with: error.localizedDescription)
+        }
+    }
+
+    private func syncAudioInputPolicy() {
+        let shouldCaptureInput = isPaused == false && isPreparingInitialCoachTurn == false
+        audioEngineService?.setInputEnabled(shouldCaptureInput)
+        audioEngineService?.streamsInputAudioToServer = false
     }
 
     private func syncLiveTranscriptLines() {
@@ -598,11 +811,6 @@ final class ConversationViewModel: ObservableObject, Identifiable {
                 )
             }
         liveTranscriptLines = lines
-        displayedUserItemIDs = Set(
-            lines
-                .filter { $0.role == .user && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
-                .map(\.id)
-        )
     }
 
     private func requestReviewWithRetry() async throws -> String {

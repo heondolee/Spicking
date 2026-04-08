@@ -11,6 +11,7 @@ final class AudioEngineService {
     var onAssistantPlaybackChanged: ((Bool) -> Void)?
     var onAssistantPlaybackFinished: ((String) -> Void)?
     var inputEnabled = true
+    var streamsInputAudioToServer = true
 
     private let inputEngine = AVAudioEngine()
     private let outputEngine = AVAudioEngine()
@@ -34,6 +35,7 @@ final class AudioEngineService {
     private var speechRecognitionTask: SFSpeechRecognitionTask?
     private var speechRecognitionAuthorized = false
     private var lastRecognitionResult = ""
+    private var didEmitRecognitionFinal = false
     private var consecutiveAssistantSpeechDetections = 0
     private var lastAssistantPlaybackEndedAt: CFTimeInterval = 0
     private var speechRecognitionRestartAllowedAt: CFTimeInterval = 0
@@ -77,7 +79,15 @@ final class AudioEngineService {
         currentAssistantStreamEnded = false
         assistantPlaybackActive = false
         inputEnabled = true
+        streamsInputAudioToServer = true
         stopSpeechRecognition(markFinal: false)
+    }
+
+    func setInputEnabled(_ enabled: Bool) {
+        inputEnabled = enabled
+        if enabled == false {
+            stopSpeechRecognition(markFinal: false)
+        }
     }
 
     func enqueueAssistantAudio(base64: String, itemID: String) {
@@ -233,6 +243,7 @@ final class AudioEngineService {
         guard byteCount > 0, let channelData = convertedBuffer.int16ChannelData?.pointee else { return }
 
         guard shouldAcceptUserInput else { return }
+        guard streamsInputAudioToServer else { return }
 
         let data = Data(bytes: channelData, count: byteCount)
         onAudioPCMData?(data)
@@ -300,10 +311,12 @@ final class AudioEngineService {
         request.addsPunctuation = false
 
         lastRecognitionResult = ""
+        didEmitRecognitionFinal = false
         speechRecognitionRequest = request
         speechRecognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, _ in
             guard let self else { return }
             guard let result else { return }
+            guard self.didEmitRecognitionFinal == false else { return }
 
             let transcript = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !transcript.isEmpty else { return }
@@ -311,6 +324,10 @@ final class AudioEngineService {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.lastRecognitionResult = transcript
+                if result.isFinal {
+                    guard self.didEmitRecognitionFinal == false else { return }
+                    self.didEmitRecognitionFinal = true
+                }
                 self.onLiveUserTranscription?(transcript, result.isFinal)
                 if result.isFinal {
                     self.stopSpeechRecognition(markFinal: false)
@@ -327,11 +344,12 @@ final class AudioEngineService {
         guard speechRecognitionRequest != nil else { return }
         let now = CACurrentMediaTime()
         guard now - lastSpeechDetectedAt > speechRecognitionSilenceTimeout else { return }
-        stopSpeechRecognition(markFinal: false)
+        stopSpeechRecognition(markFinal: true)
     }
 
     private func stopSpeechRecognition(markFinal: Bool) {
-        if markFinal, !lastRecognitionResult.isEmpty {
+        if markFinal, !lastRecognitionResult.isEmpty, didEmitRecognitionFinal == false {
+            didEmitRecognitionFinal = true
             onLiveUserTranscription?(lastRecognitionResult, true)
         }
         speechRecognitionRequest?.endAudio()
@@ -339,5 +357,6 @@ final class AudioEngineService {
         speechRecognitionTask = nil
         speechRecognitionRequest = nil
         lastRecognitionResult = ""
+        didEmitRecognitionFinal = false
     }
 }

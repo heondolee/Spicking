@@ -6,6 +6,11 @@ struct LiveConversationView: View {
         static let bottomSpacer = "conversation_bottom_spacer"
     }
 
+    private enum TranscriptContainerStyle {
+        static let topRadius: CGFloat = 24
+        static let bottomRadius: CGFloat = 50
+    }
+
     @ObservedObject var viewModel: ConversationViewModel
     let onClose: () -> Void
     @State private var showCancelAlert = false
@@ -18,14 +23,18 @@ struct LiveConversationView: View {
 
             transcriptArea
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .padding(.horizontal, 20)
-                .overlay(alignment: .bottom) {
+                .padding(.horizontal, 10)
+                .overlay(alignment: .top) {
                     speakingState
                         .padding(20)
                 }
+                .overlay(alignment: .bottom) {
+                    bottomControls
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 18)
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-				.padding(.bottom, 20)
         .ignoresSafeArea(.container, edges: .bottom)
         .navigationBarBackButtonHidden()
         .navigationBarTitleDisplayMode(.inline)
@@ -110,12 +119,142 @@ struct LiveConversationView: View {
         )
     }
 
+    private var bottomControls: some View {
+        ZStack {
+            HStack {
+                pauseButton
+                Spacer()
+                if viewModel.inputMode == .manual {
+                    sendButton
+                }
+            }
+
+            modeControls
+        }
+    }
+
+    private var pauseButton: some View {
+        Button {
+            Task {
+                await viewModel.togglePause()
+            }
+        } label: {
+            Image(systemName: viewModel.isPaused ? "play.fill" : "pause.fill")
+                .font(.title3.weight(.bold))
+                .foregroundStyle(SpickingPalette.ink)
+                .frame(width: 56, height: 56)
+                .background(
+                    Circle()
+                        .fill(Color.white.opacity(0.92))
+                        .overlay(
+                            Circle()
+                                .stroke(.white.opacity(0.88), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.05), radius: 18, y: 10)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var modeControls: some View {
+        HStack(spacing: 4) {
+            modeSegment(title: "자동 인식", mode: .automatic)
+            modeSegment(title: "직접 보내기", mode: .manual)
+        }
+        .padding(4)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.92))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(.white.opacity(0.88), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.05), radius: 18, y: 10)
+        )
+    }
+
+    private var sendButton: some View {
+        Button {
+            Task {
+                await viewModel.sendCurrentTurnManually()
+            }
+        } label: {
+            Image(systemName: "paperplane.fill")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+        }
+        .background(
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [SpickingPalette.ocean, SpickingPalette.teal],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .overlay(
+                    Circle()
+                        .stroke(.white.opacity(0.26), lineWidth: 1)
+                )
+                .shadow(color: SpickingPalette.ocean.opacity(0.24), radius: 18, y: 10)
+        )
+        .buttonStyle(.plain)
+        .disabled(!viewModel.canSendCurrentTurnManually)
+        .opacity(viewModel.canSendCurrentTurnManually ? 1 : 0.55)
+        .allowsHitTesting(viewModel.canSendCurrentTurnManually)
+    }
+
+    private func modeSegment(title: String, mode: ConversationInputMode) -> some View {
+        Button {
+            guard viewModel.inputMode != mode else { return }
+            viewModel.toggleInputMode()
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(viewModel.inputMode == mode ? .white : SpickingPalette.ink)
+                .frame(minWidth: 92)
+                .frame(height: 48)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(
+                            viewModel.inputMode == mode
+                                ? AnyShapeStyle(
+                                    LinearGradient(
+                                        colors: [SpickingPalette.ocean, SpickingPalette.teal],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                : AnyShapeStyle(Color.clear)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
     private var transcriptArea: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 40, style: .continuous)
+            UnevenRoundedRectangle(
+                cornerRadii: .init(
+                    topLeading: TranscriptContainerStyle.topRadius,
+                    bottomLeading: TranscriptContainerStyle.bottomRadius,
+                    bottomTrailing: TranscriptContainerStyle.bottomRadius,
+                    topTrailing: TranscriptContainerStyle.topRadius
+                ),
+                style: .continuous
+            )
                 .fill(Color.white.opacity(0.60))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 40, style: .continuous)
+                    UnevenRoundedRectangle(
+                        cornerRadii: .init(
+                            topLeading: TranscriptContainerStyle.topRadius,
+                            bottomLeading: TranscriptContainerStyle.bottomRadius,
+                            bottomTrailing: TranscriptContainerStyle.bottomRadius,
+                            topTrailing: TranscriptContainerStyle.topRadius
+                        ),
+                        style: .continuous
+                    )
                         .stroke(.white.opacity(0.86), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.05), radius: 22, y: 12)
@@ -131,7 +270,7 @@ struct LiveConversationView: View {
                                 .id(line.id)
                         }
                         Color.clear
-                            .frame(height: 74)
+                            .frame(height: 120)
                             .allowsHitTesting(false)
                             .id(ScrollAnchor.bottomSpacer)
                     }
@@ -141,7 +280,17 @@ struct LiveConversationView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .scrollIndicators(.hidden)
-                .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+                .clipShape(
+                    UnevenRoundedRectangle(
+                        cornerRadii: .init(
+                            topLeading: TranscriptContainerStyle.topRadius,
+                            bottomLeading: TranscriptContainerStyle.bottomRadius,
+                            bottomTrailing: TranscriptContainerStyle.bottomRadius,
+                            topTrailing: TranscriptContainerStyle.topRadius
+                        ),
+                        style: .continuous
+                    )
+                )
                 .onReceive(
                     viewModel.$liveTranscriptLines
                         .map { lines -> String in

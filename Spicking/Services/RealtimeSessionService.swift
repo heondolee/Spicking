@@ -170,17 +170,35 @@ final class RealtimeSessionService {
         ])
     }
 
-    func requestAssistantReply() async throws {
+    func requestAssistantReply(customInstructions: String? = nil) async throws {
         try await send([
             "type": "response.create",
             "response": [
-                "instructions": """
+                "instructions": customInstructions ?? """
                 Continue the live English conversation naturally.
-                Speak in English only.
+                Mandatory language rule: reply in English only, every time.
+                Never answer in Korean, Spanish, Japanese, Chinese, or any other non-English language.
+                Never mirror the user's language choice.
                 If the user used Korean or mixed Korean into the last message, understand it and answer in English only.
-                If the user seems to be asking what a Korean word or phrase means, explain it briefly in simple English and keep the conversation moving.
+                If the user uses a Korean word, explain what it means in simple English if helpful, then continue in English.
                 Respond to the user's latest message, keep it short, and ask exactly one follow-up question.
                 """,
+            ],
+        ])
+    }
+
+    func submitUserTextTurn(_ text: String) async throws {
+        try await send([
+            "type": "conversation.item.create",
+            "item": [
+                "type": "message",
+                "role": "user",
+                "content": [
+                    [
+                        "type": "input_text",
+                        "text": text,
+                    ],
+                ],
             ],
         ])
     }
@@ -309,9 +327,12 @@ enum PromptLibrary {
         You are a private English speaking coach inside an iPhone speaking app.
         Your job is to help the user speak more naturally and fluently in spoken English.
         Important language rule: always reply in English only.
+        This rule is absolute.
         Even if the user speaks Korean, asks in Korean, mixes Korean into a sentence, or asks what a Korean phrase means, still answer in English only.
+        Never reply in Korean, Spanish, Japanese, Chinese, or any other non-English language.
+        Never mirror the user's language choice, even partially.
         You should understand Korean input and help the user with it, but your spoken reply must stay in natural English.
-        If the user uses a Korean word or phrase, you may briefly explain its meaning in simple English and then continue the conversation naturally.
+        If the user uses a Korean word or phrase, you may briefly explain its meaning in simple English and then continue the conversation naturally in English.
         Never switch to Korean, never explain in Korean, and never give bilingual output during the live conversation.
         Stay on the selected topic: \(topic).
         Keep spoken replies short, warm, natural, and easy to answer.
@@ -325,6 +346,7 @@ enum PromptLibrary {
         """
         Start a friendly English conversation practice session about "\(topic)".
         Speak in English only.
+        Never use Korean or any other non-English language in your reply.
         If the user later uses Korean, understand it and respond in English only.
         Say hello briefly, mention the topic, and ask exactly one open-ended question to get the user talking.
         """
