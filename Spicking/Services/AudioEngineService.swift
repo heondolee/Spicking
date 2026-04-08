@@ -25,7 +25,7 @@ final class AudioEngineService {
     private var pendingAssistantBuffers = 0
     private var currentAssistantStreamEnded = false
     private let speechThreshold: Float = 0.010
-    private let assistantPlaybackSpeechThreshold: Float = 0.030
+    private let assistantPlaybackSpeechThreshold: Float = 0.060
     private let speechDetectionCooldown: CFTimeInterval = 0.35
     private let speechRecognitionSilenceTimeout: CFTimeInterval = 1.25
     private let assistantPlaybackGracePeriod: CFTimeInterval = 0.18
@@ -36,6 +36,7 @@ final class AudioEngineService {
     private var lastRecognitionResult = ""
     private var consecutiveAssistantSpeechDetections = 0
     private var lastAssistantPlaybackEndedAt: CFTimeInterval = 0
+    private var speechRecognitionRestartAllowedAt: CFTimeInterval = 0
     private var assistantPlaybackActive = false {
         didSet {
             if assistantPlaybackActive != oldValue {
@@ -95,6 +96,7 @@ final class AudioEngineService {
         }
 
         stopSpeechRecognition(markFinal: false)
+        speechRecognitionRestartAllowedAt = CACurrentMediaTime() + 0.25
 
         let durationMilliseconds = Double(frameCount) / playbackFormat.sampleRate * 1_000
         scheduledPlaybackMilliseconds += durationMilliseconds
@@ -134,6 +136,7 @@ final class AudioEngineService {
         currentAssistantStreamEnded = false
         assistantPlaybackActive = false
         lastAssistantPlaybackEndedAt = CACurrentMediaTime()
+        speechRecognitionRestartAllowedAt = lastAssistantPlaybackEndedAt + assistantPlaybackGracePeriod
 
         return RealtimePlaybackSnapshot(itemID: itemID, playedMilliseconds: playedMilliseconds)
     }
@@ -154,6 +157,7 @@ final class AudioEngineService {
         currentAssistantStreamEnded = false
         assistantPlaybackActive = false
         lastAssistantPlaybackEndedAt = CACurrentMediaTime()
+        speechRecognitionRestartAllowedAt = lastAssistantPlaybackEndedAt + assistantPlaybackGracePeriod
         if let finishedItemID {
             onAssistantPlaybackFinished?(finishedItemID)
         }
@@ -191,9 +195,14 @@ final class AudioEngineService {
 
     private func handleInputBuffer(_ buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat) {
         guard inputEnabled else { return }
-        detectSpeech(in: buffer)
-        appendToSpeechRecognition(buffer)
-        finishSpeechRecognitionIfNeeded()
+        let now = CACurrentMediaTime()
+        let shouldAcceptUserInput = assistantPlaybackActive == false && now >= speechRecognitionRestartAllowedAt
+
+        if shouldAcceptUserInput {
+            detectSpeech(in: buffer)
+            appendToSpeechRecognition(buffer)
+            finishSpeechRecognitionIfNeeded()
+        }
 
         guard let converter = inputConverter else { return }
         let ratio = targetInputFormat.sampleRate / inputFormat.sampleRate
@@ -213,6 +222,8 @@ final class AudioEngineService {
 
         let byteCount = Int(convertedBuffer.frameLength) * Int(targetInputFormat.streamDescription.pointee.mBytesPerFrame)
         guard byteCount > 0, let channelData = convertedBuffer.int16ChannelData?.pointee else { return }
+
+        guard shouldAcceptUserInput else { return }
 
         let data = Data(bytes: channelData, count: byteCount)
         onAudioPCMData?(data)
@@ -243,7 +254,7 @@ final class AudioEngineService {
                 consecutiveAssistantSpeechDetections = 0
             }
 
-            guard consecutiveAssistantSpeechDetections >= 2 else { return }
+            guard consecutiveAssistantSpeechDetections >= 4 else { return }
             consecutiveAssistantSpeechDetections = 0
         } else {
             consecutiveAssistantSpeechDetections = 0
@@ -272,6 +283,8 @@ final class AudioEngineService {
         guard speechRecognitionAuthorized else { return }
         guard speechRecognitionRequest == nil else { return }
         guard let speechRecognizer, speechRecognizer.isAvailable else { return }
+        guard assistantPlaybackActive == false else { return }
+        guard CACurrentMediaTime() >= speechRecognitionRestartAllowedAt else { return }
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true

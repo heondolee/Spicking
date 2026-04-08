@@ -74,10 +74,12 @@ final class RealtimeSessionService {
                             "type": "near_field",
                         ],
                         "turn_detection": [
-                            "type": "semantic_vad",
-                            "eagerness": "low",
+                            "type": "server_vad",
+                            "threshold": 0.72,
+                            "prefix_padding_ms": 250,
+                            "silence_duration_ms": 850,
                             "interrupt_response": true,
-                            "create_response": true,
+                            "create_response": false,
                         ],
                     ],
                     "output": [
@@ -164,6 +166,19 @@ final class RealtimeSessionService {
             "type": "response.create",
             "response": [
                 "instructions": PromptLibrary.kickoffInstructions(topic: topic),
+            ],
+        ])
+    }
+
+    func requestAssistantReply() async throws {
+        try await send([
+            "type": "response.create",
+            "response": [
+                "instructions": """
+                Continue the live English conversation naturally.
+                Speak in English only.
+                Respond to the user's latest message, keep it short, and ask exactly one follow-up question.
+                """,
             ],
         ])
     }

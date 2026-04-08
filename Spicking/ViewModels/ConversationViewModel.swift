@@ -35,6 +35,9 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private var activeUserTranscriptSource: UserTranscriptSource?
     private var initialCoachPlaybackStarted = false
     private var liveTranscriptSyncTask: Task<Void, Never>?
+    private var pendingAssistantResponseTask: Task<Void, Never>?
+    private var lastFinalizedUserRemoteItemID: String?
+    private var lastAssistantResponseRequestedForUserItemID: String?
 
     init(topic: String, modelContext: ModelContext) {
         self.topic = topic
@@ -149,6 +152,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     }
 
     func close() {
+        pendingAssistantResponseTask?.cancel()
         audioEngineService?.stop()
         realtimeSessionService?.disconnect()
     }
@@ -205,6 +209,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
 
     private func handleUserSpeechDetected() async {
         guard isPreparingInitialCoachTurn == false else { return }
+        pendingAssistantResponseTask?.cancel()
         ensureUserTurnReserved()
         guard assistantSpeaking else { return }
 
@@ -334,20 +339,77 @@ final class ConversationViewModel: ObservableObject, Identifiable {
 
     private func finalizeUserTranscript(remoteItemID: String, text: String) {
         upsertTranscript(remoteItemID: remoteItemID, role: .user, text: text, isFinal: true)
+        lastFinalizedUserRemoteItemID = remoteItemID
+        scheduleAssistantReply()
     }
 
     private func handleAssistantOutputStarted() {
+        pendingAssistantResponseTask?.cancel()
+        finalizeActiveUserDraftIfNeeded()
+        if let lastFinalizedUserRemoteItemID {
+            lastAssistantResponseRequestedForUserItemID = lastFinalizedUserRemoteItemID
+        }
         if isAwaitingInitialCoachResponse {
             isAwaitingInitialCoachResponse = false
         }
         initialCoachPlaybackStarted = true
     }
 
+    private func finalizeActiveUserDraftIfNeeded() {
+        guard let activeUserRemoteItemID,
+              let entry = transcriptEntriesByRemoteID[activeUserRemoteItemID],
+              entry.role == .user
+        else { return }
+
+        let trimmed = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            transcriptEntriesByRemoteID.removeValue(forKey: activeUserRemoteItemID)
+            modelContext.delete(entry)
+        } else {
+            entry.text = trimmed
+            entry.isFinal = true
+            entry.endedAt = .now
+            lastFinalizedUserRemoteItemID = activeUserRemoteItemID
+        }
+
+        self.activeUserRemoteItemID = nil
+        activeUserTranscriptSource = nil
+        try? modelContext.save()
+        scheduleLiveTranscriptSync()
+    }
+
     private func handleAssistantPlaybackFinished(itemID: String) {
+        _ = itemID
         guard isPreparingInitialCoachTurn, initialCoachPlaybackStarted else { return }
         isPreparingInitialCoachTurn = false
         isAwaitingInitialCoachResponse = false
         audioEngineService?.inputEnabled = true
+    }
+
+    private func scheduleAssistantReply() {
+        guard isPreparingInitialCoachTurn == false else { return }
+        guard assistantSpeaking == false else { return }
+        guard let realtimeSessionService else { return }
+        guard let lastFinalizedUserRemoteItemID else { return }
+        guard lastAssistantResponseRequestedForUserItemID != lastFinalizedUserRemoteItemID else { return }
+
+        pendingAssistantResponseTask?.cancel()
+        pendingAssistantResponseTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard let self, Task.isCancelled == false else { return }
+            guard self.assistantSpeaking == false else { return }
+            guard self.activeUserRemoteItemID == nil else { return }
+            guard self.lastFinalizedUserRemoteItemID == lastFinalizedUserRemoteItemID else { return }
+            guard self.lastAssistantResponseRequestedForUserItemID != lastFinalizedUserRemoteItemID else { return }
+
+            do {
+                self.lastAssistantResponseRequestedForUserItemID = lastFinalizedUserRemoteItemID
+                try await realtimeSessionService.requestAssistantReply()
+            } catch {
+                self.lastAssistantResponseRequestedForUserItemID = nil
+                self.fail(with: error.localizedDescription)
+            }
+        }
     }
 
     private func scheduleLiveTranscriptSync() {
@@ -428,6 +490,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     }
 
     private func fail(with message: String) {
+        pendingAssistantResponseTask?.cancel()
         errorMessage = message
         connectionState = .failed
         phase = .failed(message)
