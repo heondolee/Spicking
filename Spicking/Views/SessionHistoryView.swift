@@ -232,6 +232,11 @@ private struct HistoryTranscriptBubble: View {
         VStack(alignment: isAssistant ? .leading : .trailing, spacing: 8) {
             bubble
 
+            if activeBubbleID == bubbleID || loadingBubbleID == bubbleID {
+                playbackBadge(isAssistant: false, isLoading: loadingBubbleID == bubbleID)
+                    .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .trailing)
+            }
+
             if !isAssistant, let suggestion, displayedText != entry.text {
                 Text("원문 · \(entry.text)")
                     .font(.caption)
@@ -278,23 +283,6 @@ private struct HistoryTranscriptBubble: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(background(isSpeaking: isSpeaking || isLoading))
-        .overlay(alignment: .topTrailing) {
-            if isSpeaking || isLoading {
-                HStack(spacing: 6) {
-                    Image(systemName: isLoading ? "waveform" : "speaker.wave.2.fill")
-                    Text(isLoading ? "읽는 중…" : "재생 중")
-                }
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(isAssistant ? Color.white.opacity(0.96) : SpickingPalette.ocean)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(isAssistant ? Color.white.opacity(0.18) : SpickingPalette.ocean.opacity(0.12))
-                )
-                .padding(10)
-            }
-        }
         .overlay(alignment: .bottomTrailing) {
             if entry.wasInterrupted && !isAssistant {
                 Text("중간 종료")
@@ -304,6 +292,21 @@ private struct HistoryTranscriptBubble: View {
                     .padding(.bottom, 8)
             }
         }
+    }
+
+    private func playbackBadge(isAssistant: Bool, isLoading: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: isLoading ? "waveform" : "speaker.wave.2.fill")
+            Text(isLoading ? "읽는 중…" : "재생 중")
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(isAssistant ? Color.white.opacity(0.96) : SpickingPalette.ocean)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(isAssistant ? Color.white.opacity(0.18) : SpickingPalette.ocean.opacity(0.12))
+        )
     }
 
     @ViewBuilder
@@ -422,23 +425,29 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(renderedSegments.enumerated()), id: \.offset) { index, sentence in
                 let bubbleID = "assistant-\(entryID)-\(index)"
-                Button {
-                    onSpeak(bubbleID, sentence)
-                } label: {
-                    assistantBubble(
-                        text: sentence,
-                        position: bubblePosition(for: index, totalCount: renderedSegments.count),
-                        isSpeaking: activeBubbleID == bubbleID,
-                        isLoading: loadingBubbleID == bubbleID
-                    )
+                VStack(alignment: .leading, spacing: 6) {
+                    Button {
+                        onSpeak(bubbleID, sentence)
+                    } label: {
+                        assistantBubble(
+                            text: sentence,
+                            position: bubblePosition(for: index, totalCount: renderedSegments.count),
+                            isSpeaking: activeBubbleID == bubbleID || loadingBubbleID == bubbleID
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    if activeBubbleID == bubbleID || loadingBubbleID == bubbleID {
+                        playbackBadge(isLoading: loadingBubbleID == bubbleID)
+                            .padding(.leading, 2)
+                    }
                 }
-                .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: bubbleTextMaxWidth + 32, alignment: .leading)
     }
 
-    private func assistantBubble(text: String, position: HistoryBubbleStackPosition, isSpeaking: Bool, isLoading: Bool) -> some View {
+    private func assistantBubble(text: String, position: HistoryBubbleStackPosition, isSpeaking: Bool) -> some View {
         return HistoryBubbleTextBlock(
             text: text,
             maxWidth: bubbleTextMaxWidth,
@@ -465,7 +474,7 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
             )
         )
         .overlay {
-            if isSpeaking || isLoading {
+            if isSpeaking {
                 UnevenRoundedRectangle(
                     cornerRadii: .init(
                         topLeading: position.topRadius,
@@ -478,23 +487,21 @@ private struct HistoryAssistantSentenceBubbleSequence: View {
                 .stroke(Color.white.opacity(0.42), lineWidth: 1.6)
             }
         }
-        .overlay(alignment: .topTrailing) {
-            if isSpeaking || isLoading {
-                HStack(spacing: 6) {
-                    Image(systemName: isLoading ? "waveform" : "speaker.wave.2.fill")
-                    Text(isLoading ? "읽는 중…" : "재생 중")
-                }
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(Color.white.opacity(0.96))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.16))
-                )
-                .padding(10)
-            }
+    }
+
+    private func playbackBadge(isLoading: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: isLoading ? "waveform" : "speaker.wave.2.fill")
+            Text(isLoading ? "읽는 중…" : "재생 중")
         }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(Color.white.opacity(0.96))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.16))
+        )
     }
 
     private func bubblePosition(for index: Int, totalCount: Int) -> HistoryBubbleStackPosition {
