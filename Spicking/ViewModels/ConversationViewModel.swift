@@ -445,6 +445,7 @@ final class ConversationViewModel: ObservableObject, Identifiable {
     private func shouldKeepFinalizedUserTurn(text: String) -> Bool {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.isEmpty == false else { return false }
+        guard activeUserHadVisibleLocalTranscript else { return false }
         guard hasConfirmedUserSpeech(for: cleaned) else { return false }
 
         if hasSufficientSpokenContent(cleaned) {
